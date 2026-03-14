@@ -1,0 +1,16 @@
+# executables
+*.exe
+
+# object files
+*.o
+*.obj
+
+# build folders
+x64/
+godjamie/x64/
+
+# visual studio
+.vs/
+
+# logs
+*.log

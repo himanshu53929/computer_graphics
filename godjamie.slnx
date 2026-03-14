@@ -1,0 +1,7 @@
+<Solution>
+  <Configurations>
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Project Path="godjamie/godjamie.vcxproj" Id="a01b7c3f-c260-4295-84c7-d2a7f8327393" />
+</Solution>
