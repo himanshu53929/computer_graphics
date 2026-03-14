@@ -8,7 +8,8 @@
 # build folders
 x64/
 godjamie/x64/
-
+godjamie/visual.zip
+OpenGL/
 # visual studio
 .vs/
 

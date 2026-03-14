@@ -18,10 +18,11 @@
 void frame_buffer_size_callback(GLFWwindow* window, int width, int height);
 void processInput(GLFWwindow* window);
 void mouseMoveEvent(GLFWwindow* window, double posX, double posY);
-std::vector<float> drawUnitCircle();
+std::vector<float> drawUnitCircle(float radius);
 void generateCylinder(std::vector<float>& vertices, std::vector<unsigned int>& indices, int height, float radius);
 void sendDataToCard(unsigned int& VAO, const std::vector<float>& vertices);
 void sendDataToCard(unsigned int& VAO, const std::vector<float>& vertices, const std::vector<unsigned int>& indices);
+void sendDataToCardWall(unsigned int& VAO, const std::vector<float>& vertices, const std::vector<unsigned int>& indices);
 
 // Screen Size Settings
 int width = 1000;
@@ -38,18 +39,29 @@ float lastY = height / 2.0f;
 float deltaTime = 0.0f;
 float lastFrame = 0.0f;
 
+// ground attributes
+float groundSize = 21.0f;
+
+// wall attributes
+float wallHeight = 14.0f;
+float wallOffset = groundSize - 2.5f;
+float wallSize = 21.0f;
+
 // Arrow Settings
-glm::vec3 initialArrowPos = glm::vec3(1.0f);
+glm::vec3 initialArrowPos = camera.Position;
 glm::vec3 arrowPos;
-float projectionAngle = 30.0f;
-float initialSpeed = 25.0f;
+float projectionAngle;
+float initialSpeed = 100.0f;
 float lastArrowX;
 bool releaseArrow = false;
-float speedScale = 0.5f;
-float timeScale = 0.5f;
+float speedScale = 1.0f;
+float timeScale = 1.0f;
 bool arrowReachGround = false;
+bool arrowReachWall = false;
+bool arrowStuck = false;
 glm::vec3 velocity = glm::vec3(0.0f);
 bool firstTime;
+float speedFactor = 0.2;
 
 // Motion and Gravity
 float g = 9.8;
@@ -88,13 +100,13 @@ int main() {
 
 	float Ground[] = {
 		// Position					// Color					// Texture
-		-21.0f, -1.0f, 21.0f,		 0.0f, 1.0f, 0.0f,				0.0f, 21.0f,		// left top
+		-groundSize, -1.0f, groundSize,		 0.0f, 1.0f, 0.0f,				0.0f, groundSize,		// left top
 																					
-		21.0f, -1.0f, -21.0f,		 0.0f, 1.0f, 0.0f,				21.0f, 0.0f,		// right bottom
+		groundSize, -1.0f, -groundSize,		 0.0f, 1.0f, 0.0f,				groundSize, 0.0f,		// right bottom
 																					
-		-21.0f, -1.0f, -21.0f,		 0.0f, 1.0f, 0.0f,				0.0f, 0.0f,		// left bottom
+		-groundSize, -1.0f, -groundSize,		 0.0f, 1.0f, 0.0f,				0.0f, 0.0f,		// left bottom
 																					
-		21.0f, -1.0f, 21.0f, 		 0.0f, 1.0f, 0.0f,				21.0f, 21.0f,		// right top
+		groundSize, -1.0f, groundSize, 		 0.0f, 1.0f, 0.0f,				groundSize, groundSize,		// right top
 
 	};
 
@@ -121,6 +133,10 @@ int main() {
 	glEnableVertexAttribArray(1);
 	glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(float) * 8, (void*)(sizeof(float) * 3));
 
+	// texture attributes
+	glEnableVertexAttribArray(2);
+	glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(6 * sizeof(float)));
+
 	// Sending Indices data through the element buffer
 	glGenBuffers(1, &EBO);
 	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
@@ -146,8 +162,30 @@ int main() {
 	else {
 		std::cout << "Failed to read texture file..." << std::endl;
 	}
-	glEnableVertexAttribArray(2);
-	glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(6 * sizeof(float)));
+
+
+	stbi_image_free(data);
+
+	GLuint textureWall;
+	glGenTextures(1, &textureWall);
+	glBindTexture(GL_TEXTURE_2D, textureWall);
+
+	// Let's define wrapping and filtering parameters for texture
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST_MIPMAP_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+
+
+	data = stbi_load("./resources/wall.jpg", &textureWidth, &textureHeight, &channel, 0);
+	if (data) {
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, textureWidth, textureHeight, 0, GL_RGB, GL_UNSIGNED_BYTE, data);
+		glGenerateMipmap(GL_TEXTURE_2D);
+	}
+	else {
+		std::cout << "Failed to read texture file..." << std::endl;
+	}
+
 
 	stbi_image_free(data);
 
@@ -155,7 +193,7 @@ int main() {
 
 
 	glBindVertexArray(0);
-	std::vector<float> circleVertices = drawUnitCircle();
+	std::vector<float> circleVertices = drawUnitCircle(0.03f);
 
 	Shader circleShader("circlVertexShader.glsl", "circleFragmentShader.glsl");
 	unsigned int circleVAO;
@@ -177,6 +215,20 @@ int main() {
 
 	arrowPos = initialArrowPos;
 
+	glm::vec3 wallPositions[] = {
+		glm::vec3(wallOffset, 0.0f, 0.0f),
+		glm::vec3(-wallOffset, 0.0f, 0.0f),
+		glm::vec3(0.0f, 0.0f, wallOffset),
+		glm::vec3(0.0f, 0.0f, -wallOffset)
+	};
+
+	glm::vec3 wallRotations[] = {
+		glm::vec3(0.0f, 0.0f, 1.0f),
+		glm::vec3(0.0f, 0.0f, 1.0f),
+		glm::vec3(1.0f, 0.0f, 0.0f),
+		glm::vec3(1.0f, 0.0f, 0.0f),
+	};
+
 	while (!glfwWindowShouldClose(window)) {
 		glClearColor(0.30f, 0.70f, 0.60f, 0.0f);
 		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -188,9 +240,10 @@ int main() {
 		processInput(window);
 
 		ourShader.use();
+		// Ground
 		glBindTexture(GL_TEXTURE_2D, texture);
 		glm::mat4 model = glm::mat4(1.0f);
-		model = glm::translate(model, glm::vec3(0.0f, 0.0f, -3.0f));
+		model = glm::translate(model, glm::vec3(0.0f, 0.0f, 0.0f));
 		glm::mat4 projection = glm::perspective(glm::radians(45.0f), ((float)width / height), 0.1f, 200.0f);
 		glm::mat4 view = camera.GetViewMatrix();
 
@@ -201,9 +254,37 @@ int main() {
 		glBindVertexArray(VAO);
 		glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_SHORT, 0);
 
+		// Walls
+		for (int i = 0; i < 4; i++) {
+			glBindTexture(GL_TEXTURE_2D, textureWall);
+			glm::mat4 wallModel = glm::mat4(1.0f);
+			wallModel = glm::translate(wallModel, wallPositions[i]);
+			wallModel = glm::rotate(wallModel, glm::radians(90.0f), wallRotations[i]);
+			glm::mat4 wallProjection = glm::perspective(glm::radians(45.0f), ((float)width / height), 0.1f, 200.0f);
+			glm::mat4 wallView = camera.GetViewMatrix();
+
+			ourShader.setMat4("view", wallView);
+			ourShader.setMat4("projection", wallProjection);
+			ourShader.setMat4("model", wallModel);
+
+			glBindVertexArray(VAO);
+			glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_SHORT, 0);
+		}
+
 		circleShader.use();
+		circleShader.setFloat("someColor", speedFactor);
+		glm::vec3 indicatorOffset =
+			camera.Front * 0.5f +
+			camera.Right * -0.2f +
+			camera.Up * -0.1f;
+
+		glm::vec3 indicatorPos = camera.Position + indicatorOffset;
+		glm::vec3 dir = glm::normalize(camera.Front);
+		glm::quat indicatorRotation = glm::rotation(glm::vec3(0.0f, 0.0f, 1.0f), dir);
+
 		glm::mat4 modelCircle = glm::mat4(1.0f);
-		modelCircle = glm::translate(modelCircle, glm::vec3(0.0f, 1.0f, -3.0f));
+		modelCircle = glm::translate(modelCircle, indicatorPos);
+		modelCircle *= glm::toMat4(indicatorRotation);
 		glm::mat4 projectionCircle = glm::perspective(glm::radians(45.0f), ((float)width / height), 0.1f, 200.0f);
 		glm::mat4 viewCircle = camera.GetViewMatrix();
 
@@ -216,14 +297,32 @@ int main() {
 
 		cylinderShader.use();
 
+		static glm::quat lastRot = glm::identity<glm::quat>();
+
+		// if the arrow isn't released yet calculate its position according to the camera's postion and orientation
+		if (!releaseArrow && !arrowStuck)
+		{
+			glm::vec3 offset =
+				camera.Front * 0.5f +
+				camera.Right * 0.2f +
+				camera.Up * -0.1f;
+
+			arrowPos = camera.Position + offset;
+			glm::vec3 dir = glm::normalize(camera.Front);
+
+			lastRot = glm::rotation(glm::vec3(0.0f, 0.0f, 1.0f), dir);
+		}
+
+		// if the arrow is set to release and it is not released yet i.e velocity = 0 , assign it a velocity
 		if (releaseArrow && (velocity == glm::vec3(0.0f))) {
-			velocity = glm::vec3(
-				initialSpeed * cos(glm::radians(projectionAngle)) * speedScale,
-				initialSpeed * sin(glm::radians(projectionAngle)) * speedScale,
-				0.0f
-				);
+			glm::vec3 dir = glm::normalize(camera.Front);
+			float pitch = asin(dir.y);
+			projectionAngle = glm::degrees(pitch);
+
+			velocity = camera.Front * initialSpeed * speedFactor;
 		}
 		
+		// if the arrow is released calculate its position based on physics
 		if (releaseArrow && !arrowReachGround){
 			// Update arrow
 
@@ -235,28 +334,44 @@ int main() {
 				velocity = glm::vec3(0.0f);
 				arrowReachGround = true;
 				releaseArrow = false;
+				arrowStuck = true;
 			}
 
+			if (abs(arrowPos.z) > wallOffset) {
+				velocity = glm::vec3(0.0f);
+				arrowReachWall = true;
+				releaseArrow = false;
+				arrowStuck = true;
+			}
 
+			if (abs(arrowPos.x) >= wallOffset) {
+				velocity = glm::vec3(0.0f);
+				arrowReachWall = true;
+				releaseArrow = false;
+				arrowStuck = true;
+			}
 		}
 
-// Identity quaternion by default
-		static glm::quat lastRot = glm::identity<glm::quat>();
-
+		// if arrow has some velocity then let's make its orientation towards the velocity
 		if (glm::length(velocity) > 0.0001f) {
 			// Direction of motion
 			glm::vec3 dir = glm::normalize(velocity);
 
-			// Compute quaternion rotation from default arrow orientation (along +Y)
-			glm::quat targetRot = glm::rotation(glm::vec3(0.0f, 1.0f, 0.0f), dir);
+			// Compute quaternion rotation from default arrow orientation (along +Z)
+			glm::quat targetRot = glm::rotation(glm::vec3(0.0f, 0.0f, 1.0f), dir);
 
 			// Smooth rotation using slerp (adjust 0.2f for speed)
-			lastRot = glm::slerp(lastRot, targetRot, 0.2f);
+			lastRot = glm::slerp(lastRot, targetRot, 1.0f);
+		}
+
+		// let's reposition arrow if it reached ground
+		if (arrowReachGround) {
+			releaseArrow = false;
+			arrowReachGround = false;
 		}
 
 		glm::mat4 modelCylinder = glm::mat4(1.0f);
 		modelCylinder = glm::translate(modelCylinder, arrowPos);
-		modelCylinder = glm::rotate(modelCylinder, glm::radians(90.0f), glm::vec3(0.0f, 1.0f, 0.0f));
 		modelCylinder *= glm::toMat4(lastRot);
 		cylinderShader.setMat4("model", modelCylinder);
 		
@@ -330,14 +445,29 @@ void processInput(GLFWwindow* window) {
 		camera.ProcessKeyboard(DOWN, deltaTime);
 
 	if (glfwGetKey(window, GLFW_KEY_ENTER) == GLFW_PRESS)
-		releaseArrow = true;
+		if (!arrowStuck)
+			releaseArrow = true;
 
-	if (glfwGetKey(window, GLFW_KEY_P) == GLFW_PRESS) {
-		arrowPos = initialArrowPos;
-		releaseArrow = false;
-		velocity = glm::vec3(0.0f);
-		arrowReachGround = false;
+	if (glfwGetKey(window, GLFW_KEY_P) == GLFW_PRESS)
+		arrowStuck = false;
+
+	static bool previousUp = false;
+	bool currentUp = glfwGetKey(window, GLFW_KEY_UP) == GLFW_PRESS;
+	if (currentUp && !previousUp) {
+		speedFactor += 0.05f;
 	}
+	previousUp = currentUp;
+
+	static bool previousDown = false;
+	bool currentDown = glfwGetKey(window, GLFW_KEY_DOWN) == GLFW_PRESS;
+	if (currentDown && !previousDown) {
+		speedFactor -= 0.05f;
+		if (speedFactor <= 0) {
+			speedFactor = 0.0f;
+		}
+	}
+	previousDown = currentDown;
+
 }
 
 void mouseMoveEvent(GLFWwindow* window, double posX, double posY) {
@@ -361,7 +491,7 @@ void mouseMoveEvent(GLFWwindow* window, double posX, double posY) {
 	return;
 }
 
-std::vector<float> drawUnitCircle() {
+std::vector<float> drawUnitCircle(float radius) {
 	int sectorCount = 36;
 	const float PI = 3.14159;
 	float sectorStep = 2 * PI / sectorCount;
@@ -375,9 +505,9 @@ std::vector<float> drawUnitCircle() {
 	for (int i = 0; i <= sectorCount; i++) {
 		sectorAngle = sectorStep * i;
 
-		vertices.push_back(cos(sectorAngle)); // x
-		vertices.push_back(sin(sectorAngle)); // y
-		vertices.push_back(0); // z
+		vertices.push_back(radius * cos(sectorAngle)); // x
+		vertices.push_back(radius * sin(sectorAngle)); // y
+		vertices.push_back(radius * 0); // z
 	}
 
 	return vertices;
@@ -491,6 +621,30 @@ void sendDataToCard(unsigned int& VAO, const std::vector<float>& vertices, const
 
 	glEnableVertexAttribArray(0);
 	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+
+	glGenBuffers(1, &EBO);
+	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
+
+	glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(unsigned int), indices.data(), GL_STATIC_DRAW);
+}
+
+void sendDataToCardWall(unsigned int& VAO, const std::vector<float>& vertices, const std::vector<unsigned int>& indices) {
+	glBindVertexArray(VAO);
+	unsigned int VBO, EBO;
+
+	glGenBuffers(1, &VBO);
+	glBindBuffer(GL_ARRAY_BUFFER, VBO);
+
+	glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(float), vertices.data(), GL_STATIC_DRAW);
+
+	glEnableVertexAttribArray(0);
+	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)0);
+
+	glEnableVertexAttribArray(1);
+	glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(sizeof(float) * 3));
+
+	glEnableVertexAttribArray(2);
+	glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(sizeof(float) * 6));
 
 	glGenBuffers(1, &EBO);
 	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
