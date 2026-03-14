@@ -13,16 +13,16 @@
 
 #include "Camera.h"
 #include "Shader.h"
+#include "Arrow.h"
 
 
 void frame_buffer_size_callback(GLFWwindow* window, int width, int height);
 void processInput(GLFWwindow* window);
 void mouseMoveEvent(GLFWwindow* window, double posX, double posY);
 std::vector<float> drawUnitCircle(float radius);
-void generateCylinder(std::vector<float>& vertices, std::vector<unsigned int>& indices, int height, float radius);
 void sendDataToCard(unsigned int& VAO, const std::vector<float>& vertices);
 void sendDataToCard(unsigned int& VAO, const std::vector<float>& vertices, const std::vector<unsigned int>& indices);
-void sendDataToCardWall(unsigned int& VAO, const std::vector<float>& vertices, const std::vector<unsigned int>& indices);
+
 
 // Screen Size Settings
 int width = 1000;
@@ -98,7 +98,7 @@ int main() {
 
 	Shader ourShader("vertexShader.glsl", "fragmentShader.glsl");
 
-	float Ground[] = {
+	std::vector<float> Ground = {
 		// Position					// Color					// Texture
 		-groundSize, -1.0f, groundSize,		 0.0f, 1.0f, 0.0f,				0.0f, groundSize,		// left top
 																					
@@ -110,7 +110,7 @@ int main() {
 
 	};
 
-	GLushort corners[] = {
+	std::vector <unsigned int> corners = {
 		0, 2, 1,
 		0, 1, 3,
 	};
@@ -120,27 +120,7 @@ int main() {
 	glGenVertexArrays(1, &VAO);
 	glBindVertexArray(VAO);
 
-	// Vertex Data Sent through vertex buffer
-	glGenBuffers(1, &VBO);
-	glBindBuffer(GL_ARRAY_BUFFER, VBO);
-	glBufferData(GL_ARRAY_BUFFER, sizeof(Ground), Ground, GL_STATIC_DRAW);
-
-	// Vertex Attributes
-	glEnableVertexAttribArray(0);
-	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), NULL);
-
-	// Color Attributes
-	glEnableVertexAttribArray(1);
-	glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(float) * 8, (void*)(sizeof(float) * 3));
-
-	// texture attributes
-	glEnableVertexAttribArray(2);
-	glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(6 * sizeof(float)));
-
-	// Sending Indices data through the element buffer
-	glGenBuffers(1, &EBO);
-	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
-	glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(corners), corners, GL_STATIC_DRAW);
+	sendDataToCard(VAO, Ground, corners);
 
 	GLint textureWidth, textureHeight, channel;
 	GLuint texture;
@@ -189,9 +169,6 @@ int main() {
 
 	stbi_image_free(data);
 
-
-
-
 	glBindVertexArray(0);
 	std::vector<float> circleVertices = drawUnitCircle(0.03f);
 
@@ -200,17 +177,6 @@ int main() {
 	glGenVertexArrays(1, &circleVAO);
 	glBindVertexArray(circleVAO);
 	sendDataToCard(circleVAO, circleVertices);
-	glBindVertexArray(0);
-
-	std::vector<float> cylinderVertices;
-	std::vector<unsigned int> cylinderIndices;
-	generateCylinder(cylinderVertices, cylinderIndices, 2, 0.05f);
-
-	Shader cylinderShader("cylinderVertexShader.glsl", "cylinderFragmentShader.glsl");
-	unsigned int cylinderVAO;
-	glGenVertexArrays(1, &cylinderVAO);
-	glBindVertexArray(cylinderVAO);
-	sendDataToCard(cylinderVAO, cylinderVertices, cylinderIndices);
 	glBindVertexArray(0);
 
 	arrowPos = initialArrowPos;
@@ -229,6 +195,8 @@ int main() {
 		glm::vec3(1.0f, 0.0f, 0.0f),
 	};
 
+	Arrow arrow(2.0f, 0.05f, 0.5f, 0.05f);
+
 	while (!glfwWindowShouldClose(window)) {
 		glClearColor(0.30f, 0.70f, 0.60f, 0.0f);
 		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -238,6 +206,8 @@ int main() {
 		deltaTime = currentFrame - lastFrame;
 		lastFrame = currentFrame;
 		processInput(window);
+
+
 
 		ourShader.use();
 		// Ground
@@ -252,7 +222,7 @@ int main() {
 		ourShader.setMat4("model", model);
 
 		glBindVertexArray(VAO);
-		glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_SHORT, 0);
+		glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
 
 		// Walls
 		for (int i = 0; i < 4; i++) {
@@ -268,7 +238,7 @@ int main() {
 			ourShader.setMat4("model", wallModel);
 
 			glBindVertexArray(VAO);
-			glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_SHORT, 0);
+			glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
 		}
 
 		circleShader.use();
@@ -294,8 +264,6 @@ int main() {
 
 		glBindVertexArray(circleVAO);
 		glDrawArrays(GL_TRIANGLE_FAN, 0, circleVertices.size() / 3);
-
-		cylinderShader.use();
 
 		static glm::quat lastRot = glm::identity<glm::quat>();
 
@@ -370,21 +338,13 @@ int main() {
 			arrowReachGround = false;
 		}
 
-		glm::mat4 modelCylinder = glm::mat4(1.0f);
-		modelCylinder = glm::translate(modelCylinder, arrowPos);
-		modelCylinder *= glm::toMat4(lastRot);
-		cylinderShader.setMat4("model", modelCylinder);
-		
-		glm::mat4 projectionCylinder = glm::perspective(glm::radians(45.0f), ((float)width / height), 0.1f, 200.0f);
-		glm::mat4 viewCylinder = camera.GetViewMatrix();
+		glm::mat4 modelArrow = glm::mat4(1.0f);
+		modelArrow = glm::translate(modelArrow, arrowPos);
+		modelArrow *= glm::toMat4(lastRot);		
+		glm::mat4 projectionArrow = glm::perspective(glm::radians(45.0f), ((float)width / height), 0.1f, 200.0f);
+		glm::mat4 viewArrow = camera.GetViewMatrix();
 
-		cylinderShader.setMat4("view", viewCylinder);
-		cylinderShader.setMat4("projection", projectionCylinder);
-		cylinderShader.setMat4("model", modelCylinder);
-
-		glBindVertexArray(cylinderVAO);
-		glDrawElements(GL_TRIANGLES, cylinderIndices.size(), GL_UNSIGNED_INT, 0);
-
+		arrow.draw(modelArrow, viewArrow, projectionArrow);
 
 		glfwPollEvents();
 		glfwSwapBuffers(window);
@@ -513,90 +473,6 @@ std::vector<float> drawUnitCircle(float radius) {
 	return vertices;
 }
 
-void generateCylinder(std::vector<float>& vertices, std::vector<unsigned int>& indices, int height, float radius) {
-	vertices.clear();
-	indices.clear();
-
-	int sectorCount = 36;
-	const float PI = 3.14159;
-	float sectorStep = 2 * PI / sectorCount;
-	float sectorAngle;
-	float h = height / 2.0f;
-
-	// For Curve Sides
-	for (int i = 0; i <= sectorCount; i++) {
-		sectorAngle = sectorStep * i;
-		float x = radius * cos(sectorAngle);
-		float y = radius * sin(sectorAngle);
-
-		vertices.push_back(x); // x
-		vertices.push_back(y); // y
-		vertices.push_back(-h); // z
-
-		vertices.push_back(x); // x
-		vertices.push_back(y); // y
-		vertices.push_back(h); // z
-	}
-
-	for (int i = 0; i < sectorCount; i++) {
-		unsigned int b1 = i * 2;
-		unsigned int t1 = i * 2 + 1;
-		unsigned int b2 = (i + 1) * 2;
-		unsigned int t2 = (i + 1) * 2 + 1;
-
-		indices.push_back(b1);
-		indices.push_back(t1);
-		indices.push_back(b2);
-
-		indices.push_back(t1);
-		indices.push_back(t2);
-		indices.push_back(b2);
-	}
-
-	// For Caps
-	int centerBottomIdx = vertices.size() / 3;
-	int centerTopIdx = centerBottomIdx + 1;
-
-	// bottom center
-	vertices.push_back(0.0f);
-	vertices.push_back(0.0f);
-	vertices.push_back(-h);
-
-	// top center
-	vertices.push_back(0.0f);
-	vertices.push_back(0.0f);
-	vertices.push_back(h);
-
-	for (int i = 0; i <= sectorCount; i++) {
-		float sectorAngle = i * sectorStep;
-		float x = radius * cos(sectorAngle);
-		float y = radius * sin(sectorAngle);
-
-		vertices.push_back(x);
-		vertices.push_back(y);
-		vertices.push_back(-h);
-
-		vertices.push_back(x);
-		vertices.push_back(y);
-		vertices.push_back(h);
-	}
-
-	int ringStart = centerBottomIdx + 2;
-	for (int i = 0; i < sectorCount; i++) {
-		int currentRingIdx = ringStart + (i * 2);
-		int nextRingIdx = ringStart + ((i + 1) * 2);
-
-		indices.push_back(centerBottomIdx);
-		indices.push_back(nextRingIdx);
-		indices.push_back(currentRingIdx);
-
-		indices.push_back(centerTopIdx);
-		indices.push_back(currentRingIdx + 1);
-		indices.push_back(nextRingIdx + 1);
-	}
-
-}
-
 void sendDataToCard(unsigned int& VAO, const std::vector<float>& vertices) {
 	glBindVertexArray(VAO);
 	unsigned int VBO, EBO;
@@ -619,32 +495,17 @@ void sendDataToCard(unsigned int& VAO, const std::vector<float>& vertices, const
 
 	glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(float), vertices.data(), GL_STATIC_DRAW);
 
-	glEnableVertexAttribArray(0);
-	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
-
-	glGenBuffers(1, &EBO);
-	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
-
-	glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(unsigned int), indices.data(), GL_STATIC_DRAW);
-}
-
-void sendDataToCardWall(unsigned int& VAO, const std::vector<float>& vertices, const std::vector<unsigned int>& indices) {
-	glBindVertexArray(VAO);
-	unsigned int VBO, EBO;
-
-	glGenBuffers(1, &VBO);
-	glBindBuffer(GL_ARRAY_BUFFER, VBO);
-
-	glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(float), vertices.data(), GL_STATIC_DRAW);
-
+	// Position Attirb
 	glEnableVertexAttribArray(0);
 	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)0);
 
+	// Normal Attrib
 	glEnableVertexAttribArray(1);
-	glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(sizeof(float) * 3));
+	glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(3 * sizeof(float)));
 
+	// Texture Attrib
 	glEnableVertexAttribArray(2);
-	glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(sizeof(float) * 6));
+	glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(6 * sizeof(float)));
 
 	glGenBuffers(1, &EBO);
 	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
