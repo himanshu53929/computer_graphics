@@ -20,8 +20,9 @@ void frame_buffer_size_callback(GLFWwindow* window, int width, int height);
 void processInput(GLFWwindow* window);
 void mouseMoveEvent(GLFWwindow* window, double posX, double posY);
 std::vector<float> drawUnitCircle(float radius);
-void sendDataToCard(unsigned int& VAO, const std::vector<float>& vertices);
-void sendDataToCard(unsigned int& VAO, const std::vector<float>& vertices, const std::vector<unsigned int>& indices);
+void generateSphere(std::vector<float>& vertices, std::vector<unsigned int>& indices, float radius);
+void sendDataToCard(unsigned int& VAO, const std::vector<float>& vertices, int stride);
+void sendDataToCard(unsigned int& VAO, const std::vector<float>& vertices, const std::vector<unsigned int>& indices, int stride);
 
 
 // Screen Size Settings
@@ -66,6 +67,9 @@ float speedFactor = 0.2;
 // Motion and Gravity
 float g = 9.8;
 
+// Light Attributes
+glm::vec3 lightPos = glm::vec3(-15.0f, 17.0f, -15.0f);
+
 
 int main() {
 	if (!glfwInit()) {
@@ -99,12 +103,12 @@ int main() {
 	Shader ourShader("vertexShader.glsl", "fragmentShader.glsl");
 
 	std::vector<float> Ground = {
-		// Position					// Color					// Texture
-		-groundSize, -1.0f, groundSize,		 0.0f, 1.0f, 0.0f,				0.0f, groundSize,		// left top
+		// Position								// Color					// Texture
+		-groundSize, -1.0f, groundSize,		 0.0f, 1.0f, 0.0f,				0.0f, groundSize,			// left top
 																					
-		groundSize, -1.0f, -groundSize,		 0.0f, 1.0f, 0.0f,				groundSize, 0.0f,		// right bottom
+		groundSize, -1.0f, -groundSize,		 0.0f, 1.0f, 0.0f,				groundSize, 0.0f,			// right bottom
 																					
-		-groundSize, -1.0f, -groundSize,		 0.0f, 1.0f, 0.0f,				0.0f, 0.0f,		// left bottom
+		-groundSize, -1.0f, -groundSize,	 0.0f, 1.0f, 0.0f,				0.0f, 0.0f,					// left bottom
 																					
 		groundSize, -1.0f, groundSize, 		 0.0f, 1.0f, 0.0f,				groundSize, groundSize,		// right top
 
@@ -120,7 +124,7 @@ int main() {
 	glGenVertexArrays(1, &VAO);
 	glBindVertexArray(VAO);
 
-	sendDataToCard(VAO, Ground, corners);
+	sendDataToCard(VAO, Ground, corners, 8);
 
 	GLint textureWidth, textureHeight, channel;
 	GLuint texture;
@@ -157,7 +161,30 @@ int main() {
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 
 
-	data = stbi_load("./resources/wall.jpg", &textureWidth, &textureHeight, &channel, 0);
+	data = stbi_load("./resources/some.jpg", &textureWidth, &textureHeight, &channel, 0);
+	if (data) {
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, textureWidth, textureHeight, 0, GL_RGB, GL_UNSIGNED_BYTE, data);
+		glGenerateMipmap(GL_TEXTURE_2D);
+	}
+	else {
+		std::cout << "Failed to read texture file..." << std::endl;
+	}
+
+
+	stbi_image_free(data);
+
+	GLuint textureRoof;
+	glGenTextures(1, &textureRoof);
+	glBindTexture(GL_TEXTURE_2D, textureRoof);
+
+	// Let's define wrapping and filtering parameters for texture
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST_MIPMAP_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+
+
+	data = stbi_load("./resources/roof.jpg", &textureWidth, &textureHeight, &channel, 0);
 	if (data) {
 		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, textureWidth, textureHeight, 0, GL_RGB, GL_UNSIGNED_BYTE, data);
 		glGenerateMipmap(GL_TEXTURE_2D);
@@ -176,8 +203,16 @@ int main() {
 	unsigned int circleVAO;
 	glGenVertexArrays(1, &circleVAO);
 	glBindVertexArray(circleVAO);
-	sendDataToCard(circleVAO, circleVertices);
+	sendDataToCard(circleVAO, circleVertices, 3);
 	glBindVertexArray(0);
+
+	Shader sourceShader("sourceVertexShader.glsl", "sourceFragmentShader.glsl");
+	unsigned int sourceVAO;
+	glGenVertexArrays(1, &sourceVAO);
+	std::vector<float> sourceVertices;
+	std::vector<unsigned int> sourceIndices;
+	generateSphere(sourceVertices, sourceIndices, 1);
+	sendDataToCard(sourceVAO, sourceVertices, sourceIndices, 8);
 
 	arrowPos = initialArrowPos;
 
@@ -207,6 +242,17 @@ int main() {
 		lastFrame = currentFrame;
 		processInput(window);
 
+		glm::mat4 projection = glm::perspective(glm::radians(45.0f), ((float)width / height), 0.1f, 200.0f);
+		glm::mat4 view = camera.GetViewMatrix();
+
+		sourceShader.use();
+		glm::mat4 sourceModel = glm::mat4(1.0f);
+		sourceModel = glm::translate(sourceModel, lightPos);
+		sourceShader.setMat4("model", sourceModel);
+		sourceShader.setMat4("view", view);
+		sourceShader.setMat4("projection", projection);
+		glBindVertexArray(sourceVAO);
+		glDrawElements(GL_TRIANGLES, sourceIndices.size(), GL_UNSIGNED_INT, 0);
 
 
 		ourShader.use();
@@ -214,12 +260,23 @@ int main() {
 		glBindTexture(GL_TEXTURE_2D, texture);
 		glm::mat4 model = glm::mat4(1.0f);
 		model = glm::translate(model, glm::vec3(0.0f, 0.0f, 0.0f));
-		glm::mat4 projection = glm::perspective(glm::radians(45.0f), ((float)width / height), 0.1f, 200.0f);
-		glm::mat4 view = camera.GetViewMatrix();
+		
 
 		ourShader.setMat4("view", view);
 		ourShader.setMat4("projection", projection);
 		ourShader.setMat4("model", model);
+
+		glBindVertexArray(VAO);
+		glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
+
+		// Roof
+		glBindTexture(GL_TEXTURE_2D, textureRoof);
+		glm::mat4 roofModel = glm::mat4(1.0f);
+		roofModel = glm::translate(roofModel, glm::vec3(0.0f, 22.0f, 0.0f));
+
+		ourShader.setMat4("view", view);
+		ourShader.setMat4("projection", projection);
+		ourShader.setMat4("model", roofModel);
 
 		glBindVertexArray(VAO);
 		glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
@@ -230,11 +287,10 @@ int main() {
 			glm::mat4 wallModel = glm::mat4(1.0f);
 			wallModel = glm::translate(wallModel, wallPositions[i]);
 			wallModel = glm::rotate(wallModel, glm::radians(90.0f), wallRotations[i]);
-			glm::mat4 wallProjection = glm::perspective(glm::radians(45.0f), ((float)width / height), 0.1f, 200.0f);
-			glm::mat4 wallView = camera.GetViewMatrix();
 
-			ourShader.setMat4("view", wallView);
-			ourShader.setMat4("projection", wallProjection);
+
+			ourShader.setMat4("view",view);
+			ourShader.setMat4("projection", projection);
 			ourShader.setMat4("model", wallModel);
 
 			glBindVertexArray(VAO);
@@ -255,11 +311,10 @@ int main() {
 		glm::mat4 modelCircle = glm::mat4(1.0f);
 		modelCircle = glm::translate(modelCircle, indicatorPos);
 		modelCircle *= glm::toMat4(indicatorRotation);
-		glm::mat4 projectionCircle = glm::perspective(glm::radians(45.0f), ((float)width / height), 0.1f, 200.0f);
-		glm::mat4 viewCircle = camera.GetViewMatrix();
 
-		circleShader.setMat4("view", viewCircle);
-		circleShader.setMat4("projection", projectionCircle);
+
+		circleShader.setMat4("view",view);
+		circleShader.setMat4("projection", projection);
 		circleShader.setMat4("model", modelCircle);
 
 		glBindVertexArray(circleVAO);
@@ -341,10 +396,8 @@ int main() {
 		glm::mat4 modelArrow = glm::mat4(1.0f);
 		modelArrow = glm::translate(modelArrow, arrowPos);
 		modelArrow *= glm::toMat4(lastRot);		
-		glm::mat4 projectionArrow = glm::perspective(glm::radians(45.0f), ((float)width / height), 0.1f, 200.0f);
-		glm::mat4 viewArrow = camera.GetViewMatrix();
 
-		arrow.draw(modelArrow, viewArrow, projectionArrow);
+		arrow.draw(modelArrow, view, projection);
 
 		glfwPollEvents();
 		glfwSwapBuffers(window);
@@ -428,6 +481,12 @@ void processInput(GLFWwindow* window) {
 	}
 	previousDown = currentDown;
 
+	if (glfwGetKey(window, GLFW_KEY_L) == GLFW_PRESS)
+		glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+
+	if (glfwGetKey(window, GLFW_KEY_K) == GLFW_PRESS)
+		glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+
 }
 
 void mouseMoveEvent(GLFWwindow* window, double posX, double posY) {
@@ -473,20 +532,82 @@ std::vector<float> drawUnitCircle(float radius) {
 	return vertices;
 }
 
-void sendDataToCard(unsigned int& VAO, const std::vector<float>& vertices) {
-	glBindVertexArray(VAO);
-	unsigned int VBO, EBO;
+void generateSphere(std::vector<float>& vertices, std::vector<unsigned int>& indices, float radius)
+{
+	// constants inside function
+	const int stacks = 50;
+	const int sectors = 50;
+	const float PI = 3.14159265359f;
 
-	glGenBuffers(1, &VBO);
-	glBindBuffer(GL_ARRAY_BUFFER, VBO);
+	float x, y, z, xy;
+	float nx, ny, nz;
+	float u, v;
 
-	glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(float), vertices.data(), GL_STATIC_DRAW);
+	float sectorStep = 2 * PI / sectors;
+	float stackStep = PI / stacks;
 
-	glEnableVertexAttribArray(0);
-	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+	for (int i = 0; i <= stacks; ++i)
+	{
+		float stackAngle = PI / 2 - i * stackStep; // from +pi/2 to -pi/2
+		xy = radius * cos(stackAngle);
+		y = radius * sin(stackAngle);
+
+		for (int j = 0; j <= sectors; ++j)
+		{
+			float sectorAngle = j * sectorStep;
+
+			x = xy * cos(sectorAngle);
+			z = xy * sin(sectorAngle);
+
+			// position
+			vertices.push_back(x);
+			vertices.push_back(y);
+			vertices.push_back(z);
+
+			// normal
+			nx = x / radius;
+			ny = y / radius;
+			nz = z / radius;
+			vertices.push_back(nx);
+			vertices.push_back(ny);
+			vertices.push_back(nz);
+
+			// texture coords
+			u = (float)j / sectors;
+			v = (float)i / stacks;
+			vertices.push_back(u);
+			vertices.push_back(v);
+		}
+	}
+
+	// indices
+	int k1, k2;
+	for (int i = 0; i < stacks; ++i)
+	{
+		k1 = i * (sectors + 1);
+		k2 = k1 + sectors + 1;
+
+		for (int j = 0; j < sectors; ++j, ++k1, ++k2)
+		{
+			if (i != 0)
+			{
+				indices.push_back(k1);
+				indices.push_back(k2);
+				indices.push_back(k1 + 1);
+			}
+
+			if (i != (stacks - 1))
+			{
+				indices.push_back(k1 + 1);
+				indices.push_back(k2);
+				indices.push_back(k2 + 1);
+			}
+		}
+	}
 }
 
-void sendDataToCard(unsigned int& VAO, const std::vector<float>& vertices, const std::vector<unsigned int>& indices) {
+
+void sendDataToCard(unsigned int& VAO, const std::vector<float>& vertices, int stride) {
 	glBindVertexArray(VAO);
 	unsigned int VBO, EBO;
 
@@ -497,18 +618,42 @@ void sendDataToCard(unsigned int& VAO, const std::vector<float>& vertices, const
 
 	// Position Attirb
 	glEnableVertexAttribArray(0);
-	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)0);
+	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride * sizeof(float), (void*)0);
 
 	// Normal Attrib
 	glEnableVertexAttribArray(1);
-	glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(3 * sizeof(float)));
+	glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, stride * sizeof(float), (void*)(3 * sizeof(float)));
 
 	// Texture Attrib
 	glEnableVertexAttribArray(2);
-	glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(6 * sizeof(float)));
+	glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, stride * sizeof(float), (void*)(6 * sizeof(float)));
+
+	glBindVertexArray(0);
+}
+
+void sendDataToCard(unsigned int& VAO, const std::vector<float>& vertices, const std::vector<unsigned int>& indices, int stride) {
+	glBindVertexArray(VAO);
+	unsigned int VBO, EBO;
+
+	glGenBuffers(1, &VBO);
+	glBindBuffer(GL_ARRAY_BUFFER, VBO);
+	glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(float), vertices.data(), GL_STATIC_DRAW);
+
+	// Position Attirb
+	glEnableVertexAttribArray(0);
+	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride * sizeof(float), (void*)0);
+
+	// Normal Attrib
+	glEnableVertexAttribArray(1);
+	glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, stride * sizeof(float), (void*)(3 * sizeof(float)));
+
+	// Texture Attrib
+	glEnableVertexAttribArray(2);
+	glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, stride * sizeof(float), (void*)(6 * sizeof(float)));
 
 	glGenBuffers(1, &EBO);
 	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
-
 	glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(unsigned int), indices.data(), GL_STATIC_DRAW);
+	
+	glBindVertexArray(0);
 }
