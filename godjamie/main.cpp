@@ -100,10 +100,10 @@ int main() {
 	glfwSetCursorPosCallback(window, mouseMoveEvent);
 	glEnable(GL_DEPTH_TEST);
 
-	Shader ourShader("vertexShader.glsl", "fragmentShader.glsl");
+	Shader groundShader("vertexShader.glsl", "fragmentShader.glsl");
 
 	std::vector<float> Ground = {
-		// Position								// Color					// Texture
+		// Position								// Normal					// Texture
 		-groundSize, -1.0f, groundSize,		 0.0f, 1.0f, 0.0f,				0.0f, groundSize,			// left top
 																					
 		groundSize, -1.0f, -groundSize,		 0.0f, 1.0f, 0.0f,				groundSize, 0.0f,			// right bottom
@@ -119,12 +119,12 @@ int main() {
 		0, 1, 3,
 	};
 
-	GLuint VBO, VAO, EBO;
+	GLuint groundVAO;
 
-	glGenVertexArrays(1, &VAO);
-	glBindVertexArray(VAO);
+	glGenVertexArrays(1, &groundVAO);
+	glBindVertexArray(groundVAO);
 
-	sendDataToCard(VAO, Ground, corners, 8);
+	sendDataToCard(groundVAO, Ground, corners, 8);
 
 	GLint textureWidth, textureHeight, channel;
 	GLuint texture;
@@ -197,13 +197,13 @@ int main() {
 	stbi_image_free(data);
 
 	glBindVertexArray(0);
-	std::vector<float> circleVertices = drawUnitCircle(0.03f);
+	std::vector<float> indicatorVertices = drawUnitCircle(0.03f);
 
-	Shader circleShader("circlVertexShader.glsl", "circleFragmentShader.glsl");
-	unsigned int circleVAO;
-	glGenVertexArrays(1, &circleVAO);
-	glBindVertexArray(circleVAO);
-	sendDataToCard(circleVAO, circleVertices, 3);
+	Shader indicatorShader("circlVertexShader.glsl", "circleFragmentShader.glsl");
+	unsigned int indicatorVAO;
+	glGenVertexArrays(1, &indicatorVAO);
+	glBindVertexArray(indicatorVAO);
+	sendDataToCard(indicatorVAO, indicatorVertices, 3);
 	glBindVertexArray(0);
 
 	Shader sourceShader("sourceVertexShader.glsl", "sourceFragmentShader.glsl");
@@ -255,18 +255,18 @@ int main() {
 		glDrawElements(GL_TRIANGLES, sourceIndices.size(), GL_UNSIGNED_INT, 0);
 
 
-		ourShader.use();
+		groundShader.use();
 		// Ground
 		glBindTexture(GL_TEXTURE_2D, texture);
 		glm::mat4 model = glm::mat4(1.0f);
 		model = glm::translate(model, glm::vec3(0.0f, 0.0f, 0.0f));
 		
 
-		ourShader.setMat4("view", view);
-		ourShader.setMat4("projection", projection);
-		ourShader.setMat4("model", model);
+		groundShader.setMat4("view", view);
+		groundShader.setMat4("projection", projection);
+		groundShader.setMat4("model", model);
 
-		glBindVertexArray(VAO);
+		glBindVertexArray(groundVAO);
 		glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
 
 		// Roof
@@ -274,11 +274,11 @@ int main() {
 		glm::mat4 roofModel = glm::mat4(1.0f);
 		roofModel = glm::translate(roofModel, glm::vec3(0.0f, 22.0f, 0.0f));
 
-		ourShader.setMat4("view", view);
-		ourShader.setMat4("projection", projection);
-		ourShader.setMat4("model", roofModel);
+		groundShader.setMat4("view", view);
+		groundShader.setMat4("projection", projection);
+		groundShader.setMat4("model", roofModel);
 
-		glBindVertexArray(VAO);
+		glBindVertexArray(groundVAO);
 		glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
 
 		// Walls
@@ -289,16 +289,16 @@ int main() {
 			wallModel = glm::rotate(wallModel, glm::radians(90.0f), wallRotations[i]);
 
 
-			ourShader.setMat4("view",view);
-			ourShader.setMat4("projection", projection);
-			ourShader.setMat4("model", wallModel);
+			groundShader.setMat4("view",view);
+			groundShader.setMat4("projection", projection);
+			groundShader.setMat4("model", wallModel);
 
-			glBindVertexArray(VAO);
+			glBindVertexArray(groundVAO);
 			glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
 		}
 
-		circleShader.use();
-		circleShader.setFloat("someColor", speedFactor);
+		indicatorShader.use();
+		indicatorShader.setFloat("someColor", speedFactor);
 		glm::vec3 indicatorOffset =
 			camera.Front * 0.5f +
 			camera.Right * -0.2f +
@@ -308,19 +308,20 @@ int main() {
 		glm::vec3 dir = glm::normalize(camera.Front);
 		glm::quat indicatorRotation = glm::rotation(glm::vec3(0.0f, 0.0f, 1.0f), dir);
 
-		glm::mat4 modelCircle = glm::mat4(1.0f);
-		modelCircle = glm::translate(modelCircle, indicatorPos);
-		modelCircle *= glm::toMat4(indicatorRotation);
+		glm::mat4 modelIndicator = glm::mat4(1.0f);
+		modelIndicator = glm::translate(modelIndicator, indicatorPos);
+		modelIndicator *= glm::toMat4(indicatorRotation);
 
 
-		circleShader.setMat4("view",view);
-		circleShader.setMat4("projection", projection);
-		circleShader.setMat4("model", modelCircle);
+		indicatorShader.setMat4("view",view);
+		indicatorShader.setMat4("projection", projection);
+		indicatorShader.setMat4("model", modelIndicator);
 
-		glBindVertexArray(circleVAO);
-		glDrawArrays(GL_TRIANGLE_FAN, 0, circleVertices.size() / 3);
+		glBindVertexArray(indicatorVAO);
+		glDrawArrays(GL_TRIANGLE_FAN, 0, indicatorVertices.size() / 3);
 
-		static glm::quat lastRot = glm::identity<glm::quat>();
+		//static glm::quat lastRot = glm::identity<glm::quat>();
+		static glm::quat lastRot = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
 
 		// if the arrow isn't released yet calculate its position according to the camera's postion and orientation
 		if (!releaseArrow && !arrowStuck)
@@ -403,8 +404,13 @@ int main() {
 		glfwSwapBuffers(window);
 	}
 
-	glDeleteProgram(ourShader.ID);
-	glDeleteVertexArrays(1, &VAO);
+	glDeleteProgram(groundShader.ID);
+	glDeleteVertexArrays(1, &groundVAO);
+	glDeleteProgram(indicatorShader.ID);
+	glDeleteVertexArrays(1, &indicatorVAO);
+	glDeleteProgram(sourceShader.ID);
+	glDeleteVertexArrays(1, &sourceVAO);
+
 	glfwTerminate();
 	return 0;
 }
