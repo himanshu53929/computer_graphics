@@ -43,5 +43,7 @@
     <None Include="circlVertexShader.glsl" />
     <None Include="cylinderVertexShader.glsl" />
     <None Include="cylinderFragmentShader.glsl" />
+    <None Include="sourceVertexShader.glsl" />
+    <None Include="sourceFragmentShader.glsl" />
   </ItemGroup>
 </Project>
