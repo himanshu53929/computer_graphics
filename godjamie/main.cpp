@@ -2,8 +2,8 @@
 #include <fstream>
 #include <vector>
 
-#include <GLFW/glfw3.h>
 #include <glad/glad.h>
+#include <GLFW/glfw3.h>
 
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -320,7 +320,8 @@ int main() {
 		glBindVertexArray(circleVAO);
 		glDrawArrays(GL_TRIANGLE_FAN, 0, circleVertices.size() / 3);
 
-		static glm::quat lastRot = glm::identity<glm::quat>();
+		//static glm::quat lastRot = glm::identity<glm::quat>();
+		static glm::quat lastRot = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
 
 		// if the arrow isn't released yet calculate its position according to the camera's postion and orientation
 		if (!releaseArrow && !arrowStuck)
