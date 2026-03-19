@@ -69,6 +69,8 @@ float g = 9.8;
 
 // Light Attributes
 glm::vec3 lightPos = glm::vec3(-15.0f, 17.0f, -15.0f);
+// Dartboard size (world units)
+float dartboardRadius = groundSize-20;
 
 
 int main() {
@@ -101,6 +103,14 @@ int main() {
 	glEnable(GL_DEPTH_TEST);
 
 	Shader groundShader("vertexShader.glsl", "fragmentShader.glsl");
+
+	// make sure shader uses texture unit 0 for its sampler
+	groundShader.use();
+	groundShader.setInt("ourTexture", 0);
+
+	// enable alpha blending for textured quads (dartboard PNG may have transparency)
+	glEnable(GL_BLEND);
+	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
 	std::vector<float> Ground = {
 		// Position								// Normal					// Texture
@@ -150,6 +160,32 @@ int main() {
 
 	stbi_image_free(data);
 
+	// Dartboard texture (PNG with alpha support)
+	GLuint textureDartboard;
+	glGenTextures(1, &textureDartboard);
+	glBindTexture(GL_TEXTURE_2D, textureDartboard);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+    int dbChannels = 0;
+	// flip vertically so image row 0 is bottom (matches OpenGL UV convention)
+	stbi_set_flip_vertically_on_load(true);
+	unsigned char* dbData = stbi_load("./resources/dartboard.png", &textureWidth, &textureHeight, &dbChannels, 4);
+	if (dbData) {
+		// ensure proper alignment for arbitrary image widths
+		glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, textureWidth, textureHeight, 0, GL_RGBA, GL_UNSIGNED_BYTE, dbData);
+		glGenerateMipmap(GL_TEXTURE_2D);
+        std::cout << "Loaded dartboard.png: " << textureWidth << "x" << textureHeight << " channels(" << dbChannels << ")" << std::endl;
+		stbi_image_free(dbData);
+		glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+	}
+	else {
+		std::cout << "Failed to load ./resources/dartboard.png" << std::endl;
+	}
+
 	GLuint textureWall;
 	glGenTextures(1, &textureWall);
 	glBindTexture(GL_TEXTURE_2D, textureWall);
@@ -196,6 +232,37 @@ int main() {
 
 	stbi_image_free(data);
 
+	glBindVertexArray(0);
+
+	// Create a dedicated quad VAO for the dartboard (uses 0..1 UVs so the image isn't stretched/repeated)
+	GLuint dartVAO = 0, dartVBO = 0, dartEBO = 0;
+    // create a unit quad in model space and scale it by `dartboardRadius` when rendering
+	// (previously this used dartboardRadius for the vertex positions and then scaled again,
+	// producing an overly large quad that could be clipped)
+	float boardHalf = 1.0f; // quad spans [-boardHalf, boardHalf]
+	std::vector<float> dartVertices = {
+		// pos.x, pos.y, pos.z,    normal.x,normal.y,normal.z,   u, v
+		-boardHalf,  boardHalf, 0.0f,   0.0f, 0.0f, 1.0f,   0.0f, 1.0f,
+		 boardHalf,  boardHalf, 0.0f,   0.0f, 0.0f, 1.0f,   1.0f, 1.0f,
+		 boardHalf, -boardHalf, 0.0f,   0.0f, 0.0f, 1.0f,   1.0f, 0.0f,
+		-boardHalf, -boardHalf, 0.0f,   0.0f, 0.0f, 1.0f,   0.0f, 0.0f
+	};
+	std::vector<unsigned int> dartIndices = { 0,1,2, 0,2,3 };
+
+	glGenVertexArrays(1, &dartVAO);
+	glGenBuffers(1, &dartVBO);
+	glGenBuffers(1, &dartEBO);
+	glBindVertexArray(dartVAO);
+	glBindBuffer(GL_ARRAY_BUFFER, dartVBO);
+	glBufferData(GL_ARRAY_BUFFER, dartVertices.size() * sizeof(float), dartVertices.data(), GL_STATIC_DRAW);
+	glEnableVertexAttribArray(0);
+	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)0);
+	glEnableVertexAttribArray(1);
+	glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(3 * sizeof(float)));
+	glEnableVertexAttribArray(2);
+	glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(6 * sizeof(float)));
+	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, dartEBO);
+	glBufferData(GL_ELEMENT_ARRAY_BUFFER, dartIndices.size() * sizeof(unsigned int), dartIndices.data(), GL_STATIC_DRAW);
 	glBindVertexArray(0);
 	std::vector<float> indicatorVertices = drawUnitCircle(0.03f);
 
@@ -282,8 +349,11 @@ int main() {
 		glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
 
 		// Walls
-		for (int i = 0; i < 4; i++) {
-			glBindTexture(GL_TEXTURE_2D, textureWall);
+    for (int i = 0; i < 4; i++) {
+		// Always use the wall texture for the room walls. The dartboard is drawn
+		// separately as a textured quad later so the wall texture must remain unchanged.
+		glActiveTexture(GL_TEXTURE0);
+		glBindTexture(GL_TEXTURE_2D, textureWall);
 			glm::mat4 wallModel = glm::mat4(1.0f);
 			wallModel = glm::translate(wallModel, wallPositions[i]);
 			wallModel = glm::rotate(wallModel, glm::radians(90.0f), wallRotations[i]);
@@ -296,6 +366,20 @@ int main() {
 			glBindVertexArray(groundVAO);
 			glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
 		}
+
+	// Draw dartboard as separate quad on +Z wall so it keeps correct aspect and size
+	groundShader.use();
+	glBindTexture(GL_TEXTURE_2D, textureDartboard);
+
+	glm::mat4 dartModel = glm::mat4(1.0f);
+    // place the dartboard flush with the -Z wall
+	dartModel = glm::translate(dartModel, glm::vec3(0.0f, 0.0f, -wallOffset));
+	// scale quad to match dartboardRadius
+	dartModel = glm::scale(dartModel, glm::vec3(dartboardRadius, dartboardRadius, 1.0f));
+	groundShader.setMat4("model", dartModel);
+	glBindVertexArray(dartVAO);
+	glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
+	glBindVertexArray(0);
 
 		indicatorShader.use();
 		indicatorShader.setFloat("someColor", speedFactor);
