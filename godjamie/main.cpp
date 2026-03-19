@@ -1,6 +1,7 @@
 #include <iostream>
 #include <fstream>
 #include <vector>
+#include <string>
 
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
@@ -71,6 +72,22 @@ float g = 9.8;
 glm::vec3 lightPos = glm::vec3(-15.0f, 17.0f, -15.0f);
 // Dartboard size (world units)
 float dartboardRadius = groundSize-20;
+// scoring
+glm::vec3 prevArrowPos = glm::vec3(0.0f);
+int lastThrowScore = 0;
+bool throwing = false;
+
+static int computeDartboardScore(float distanceFromCenter, float radius) {
+	if (distanceFromCenter > radius) return 0;
+
+	float r = radius;
+	// simple ring scoring (adjust thresholds as you like)
+	if (distanceFromCenter <= 0.1f * r) return 50; // inner bull
+	if (distanceFromCenter <= 0.25f * r) return 25; // outer bull
+	if (distanceFromCenter <= 0.5f * r) return 10; // inner ring
+	if (distanceFromCenter <= r) return 5; // outer area
+	return 0;
+}
 
 
 int main() {
@@ -309,6 +326,9 @@ int main() {
 		lastFrame = currentFrame;
 		processInput(window);
 
+		// remember arrow previous position before physics update (used for collision interpolation)
+		prevArrowPos = arrowPos;
+
 		glm::mat4 projection = glm::perspective(glm::radians(45.0f), ((float)width / height), 0.1f, 200.0f);
 		glm::mat4 view = camera.GetViewMatrix();
 
@@ -427,6 +447,12 @@ int main() {
 			float pitch = asin(dir.y);
 			projectionAngle = glm::degrees(pitch);
 
+			// starting a new throw: reset score state
+			lastThrowScore = 0;
+			throwing = true;
+			// record initial previous position for interpolation
+			prevArrowPos = arrowPos;
+
 			velocity = camera.Front * initialSpeed * speedFactor;
 		}
 		
@@ -445,11 +471,35 @@ int main() {
 				arrowStuck = true;
 			}
 
-			if (abs(arrowPos.z) > wallOffset) {
+         // Check -Z wall hit (dartboard placed at z = -wallOffset)
+			if (arrowPos.z < -wallOffset) {
+				// compute intersection of segment prevArrowPos->arrowPos with plane z = -wallOffset
+				glm::vec3 curr = arrowPos;
+				glm::vec3 prev = prevArrowPos;
+				float planeZ = -wallOffset;
+				float dz = curr.z - prev.z;
+				if (fabs(dz) > 1e-6f) {
+					float t = (planeZ - prev.z) / dz;
+					if (t >= 0.0f && t <= 1.0f) {
+						glm::vec3 hit = prev + t * (curr - prev);
+						float dist = sqrt(hit.x * hit.x + hit.y * hit.y);
+						lastThrowScore = computeDartboardScore(dist, dartboardRadius);
+						std::cout << "Dart hit at: (" << hit.x << ", " << hit.y << ") score: " << lastThrowScore << std::endl;
+					}
+				}
 				velocity = glm::vec3(0.0f);
 				arrowReachWall = true;
 				releaseArrow = false;
 				arrowStuck = true;
+				throwing = false;
+			}
+			else if (arrowPos.z > wallOffset || abs(arrowPos.x) >= wallOffset) {
+				// hit some other wall or side
+				velocity = glm::vec3(0.0f);
+				arrowReachWall = true;
+				releaseArrow = false;
+				arrowStuck = true;
+				throwing = false;
 			}
 
 			if (abs(arrowPos.x) >= wallOffset) {
@@ -483,6 +533,12 @@ int main() {
 		modelArrow *= glm::toMat4(lastRot);		
 
 		arrow.draw(modelArrow, view, projection);
+
+		// update window title with last throw score (resets on each throw)
+		{
+			std::string title = "Jamie King - Last Score: " + std::to_string(lastThrowScore);
+			glfwSetWindowTitle(window, title.c_str());
+		}
 
 		glfwPollEvents();
 		glfwSwapBuffers(window);
