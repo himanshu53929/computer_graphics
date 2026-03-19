@@ -141,7 +141,7 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="..\..\..\..\Downloads\glad.c" />
+    <ClCompile Include="..\..\..\glad\src\glad.c" />
     <ClCompile Include="imageLoader.cpp" />
     <ClCompile Include="main.cpp" />
   </ItemGroup>

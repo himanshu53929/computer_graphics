@@ -22,6 +22,7 @@ void processInput(GLFWwindow* window);
 void mouseMoveEvent(GLFWwindow* window, double posX, double posY);
 std::vector<float> drawUnitCircle(float radius);
 void generateSphere(std::vector<float>& vertices, std::vector<unsigned int>& indices, float radius);
+void checkImageFormat(const int& channel);
 void sendDataToCard(unsigned int& VAO, const std::vector<float>& vertices, int stride);
 void sendDataToCard(unsigned int& VAO, const std::vector<float>& vertices, const std::vector<unsigned int>& indices, int stride);
 
@@ -69,7 +70,8 @@ float speedFactor = 0.2;
 float g = 9.8;
 
 // Light Attributes
-glm::vec3 lightPos = glm::vec3(-15.0f, 17.0f, -15.0f);
+glm::vec3 lightPos = glm::vec3(-15.0f, 17.0f, 0.0f);
+
 // Dartboard size (world units)
 float dartboardRadius = groundSize-20;
 // scoring
@@ -88,6 +90,10 @@ static int computeDartboardScore(float distanceFromCenter, float radius) {
 	if (distanceFromCenter <= r) return 5; // outer area
 	return 0;
 }
+
+
+// Image format
+unsigned int format;
 
 
 int main() {
@@ -120,6 +126,14 @@ int main() {
 	glEnable(GL_DEPTH_TEST);
 
 	Shader groundShader("vertexShader.glsl", "fragmentShader.glsl");
+	groundShader.use();
+	groundShader.setInt("material.diffuse", 0);
+	groundShader.setVec3("light.position", lightPos);
+	glm::vec3 lightColor = glm::vec3(1.0f);
+	glm::vec3 diffuseColor = lightColor * glm::vec3(0.7f);
+	glm::vec3 ambientColor = diffuseColor * glm::vec3(0.2f);
+	groundShader.setVec3("light.ambient", ambientColor);
+	groundShader.setVec3("light.diffuse", diffuseColor);
 
 	// make sure shader uses texture unit 0 for its sampler
 	groundShader.use();
@@ -154,9 +168,9 @@ int main() {
 	sendDataToCard(groundVAO, Ground, corners, 8);
 
 	GLint textureWidth, textureHeight, channel;
-	GLuint texture;
-	glGenTextures(1, &texture);
-	glBindTexture(GL_TEXTURE_2D, texture);
+	GLuint groundTexture;
+	glGenTextures(1, &groundTexture);
+	glBindTexture(GL_TEXTURE_2D, groundTexture);
 
 	// Let's define wrapping and filtering parameters for texture
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
@@ -165,15 +179,15 @@ int main() {
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 
 
-	unsigned char* data = stbi_load("./resources/grass.jpg", &textureWidth, &textureHeight, &channel, 0);
+	unsigned char* data = stbi_load("./resources/floor.jpg", &textureWidth, &textureHeight, &channel, 0);
 	if (data) {
-		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, textureWidth, textureHeight, 0, GL_RGB, GL_UNSIGNED_BYTE, data);
+		checkImageFormat(channel);
+		glTexImage2D(GL_TEXTURE_2D, 0, format, textureWidth, textureHeight, 0, format, GL_UNSIGNED_BYTE, data);
 		glGenerateMipmap(GL_TEXTURE_2D);
 	}
 	else {
 		std::cout << "Failed to read texture file..." << std::endl;
 	}
-
 
 	stbi_image_free(data);
 
@@ -214,9 +228,10 @@ int main() {
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 
 
-	data = stbi_load("./resources/some.jpg", &textureWidth, &textureHeight, &channel, 0);
+	data = stbi_load("./resources/wall.jpg", &textureWidth, &textureHeight, &channel, 0);
 	if (data) {
-		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, textureWidth, textureHeight, 0, GL_RGB, GL_UNSIGNED_BYTE, data);
+		checkImageFormat(channel);
+		glTexImage2D(GL_TEXTURE_2D, 0, format, textureWidth, textureHeight, 0, format, GL_UNSIGNED_BYTE, data);
 		glGenerateMipmap(GL_TEXTURE_2D);
 	}
 	else {
@@ -237,16 +252,16 @@ int main() {
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 
 
-	data = stbi_load("./resources/roof.jpg", &textureWidth, &textureHeight, &channel, 0);
+	data = stbi_load("./resources/metal_grate_rusty_diff_4k.jpg", &textureWidth, &textureHeight, &channel, 0);
 	if (data) {
-		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, textureWidth, textureHeight, 0, GL_RGB, GL_UNSIGNED_BYTE, data);
+		checkImageFormat(channel);
+		glTexImage2D(GL_TEXTURE_2D, 0, format, textureWidth, textureHeight, 0, format, GL_UNSIGNED_BYTE, data);
 		glGenerateMipmap(GL_TEXTURE_2D);
 	}
+
 	else {
-		std::cout << "Failed to read texture file..." << std::endl;
+		std::cout << "Unable to load roof" << std::endl;
 	}
-
-
 	stbi_image_free(data);
 
 	glBindVertexArray(0);
@@ -314,7 +329,7 @@ int main() {
 		glm::vec3(1.0f, 0.0f, 0.0f),
 	};
 
-	Arrow arrow(2.0f, 0.05f, 0.5f, 0.05f);
+	Arrow arrow(2.0f, 0.02f, 0.5f, 0.02f);
 
 	while (!glfwWindowShouldClose(window)) {
 		glClearColor(0.30f, 0.70f, 0.60f, 0.0f);
@@ -344,7 +359,7 @@ int main() {
 
 		groundShader.use();
 		// Ground
-		glBindTexture(GL_TEXTURE_2D, texture);
+		glBindTexture(GL_TEXTURE_2D, groundTexture);
 		glm::mat4 model = glm::mat4(1.0f);
 		model = glm::translate(model, glm::vec3(0.0f, 0.0f, 0.0f));
 		
@@ -356,10 +371,14 @@ int main() {
 		glBindVertexArray(groundVAO);
 		glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
 
+		glm::mat3 normalMatrix = glm::mat3(glm::transpose(glm::inverse(model)));
+		groundShader.setMat3("normalMatrix", normalMatrix);
+
 		// Roof
 		glBindTexture(GL_TEXTURE_2D, textureRoof);
 		glm::mat4 roofModel = glm::mat4(1.0f);
 		roofModel = glm::translate(roofModel, glm::vec3(0.0f, 22.0f, 0.0f));
+		roofModel = glm::rotate(roofModel, glm::radians(180.0f), glm::vec3(1.0f, 0.0f, 0.0f));
 
 		groundShader.setMat4("view", view);
 		groundShader.setMat4("projection", projection);
@@ -752,6 +771,19 @@ void generateSphere(std::vector<float>& vertices, std::vector<unsigned int>& ind
 	}
 }
 
+void checkImageFormat(const int& channel) {
+	if (channel == 1) {
+		format = GL_RED;
+	}
+
+	else if (channel == 3){
+		format = GL_RGB;
+	}
+
+	else if (channel == 4) {
+		format = GL_RGBA;
+	}
+}
 
 void sendDataToCard(unsigned int& VAO, const std::vector<float>& vertices, int stride) {
 	glBindVertexArray(VAO);

@@ -2,10 +2,12 @@
 
 out vec4 daColor;
 
-in vec4 theColor;
+uniform sampler2D textureArrow;
+
+in vec2 texCoords;
 
 
 void main()
 {
-	daColor = theColor;
+	daColor = texture(textureArrow, texCoords);
 }

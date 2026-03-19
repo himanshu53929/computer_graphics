@@ -8,10 +8,10 @@
 
 class Arrow {
 private:
-    std::vector<float>        combinedVertices;
+    std::vector<float> combinedVertices;
     std::vector<unsigned int> combinedIndices;
 
-    unsigned int VAO = 0, VBO = 0, EBO = 0;
+    unsigned int VAO = 0, VBO = 0, EBO = 0, texture, format = GL_RGB;
 
     void generateCylinder(std::vector<float>& verts, std::vector<unsigned int>& idx, float height, float radius, float zOffset = 0.0f)
     {
@@ -173,6 +173,43 @@ private:
         glBindVertexArray(0);
     }
 
+    void checkImageFormat(const int& channel) {
+        if (channel == 1) {
+            format = GL_RED;
+        }
+
+        else if (channel == 3) {
+            format = GL_RGB;
+        }
+
+        else if (channel == 4) {
+            format = GL_RGBA;
+        }
+    }
+
+    void setTexture() {
+        int width, height, channel;
+        glGenTextures(1, &texture);
+        glBindTexture(GL_TEXTURE_2D, texture);
+
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST_MIPMAP_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+
+        unsigned char* data = stbi_load("./resources/corrugated_iron_diff_4k.jpg", &width, &height, &channel, 0);
+        if (data) {
+            checkImageFormat(channel);
+            glTexImage2D(GL_TEXTURE_2D, 0, format, width, height, 0, format, GL_UNSIGNED_BYTE, data);
+            glGenerateMipmap(GL_TEXTURE_2D);
+        }
+
+        else {
+            std::cout << "Unable to load arrow texture" << std::endl;
+        }
+        stbi_image_free(data);
+    }
+
 public:
     Arrow(float cylinderHeight, float cylinderRadius, float coneHeight, float coneRadius)
     {
@@ -194,11 +231,16 @@ public:
             combinedIndices.push_back(i + vertexOffset);
 
         setupGPU();
+        setTexture();
     }
 
     void draw(const glm::mat4& modelMatrix, const glm::mat4& viewMatrix, const glm::mat4& projectionMatrix) const {
         Shader shader("cylinderVertexShader.glsl", "cylinderFragmentShader.glsl");
         shader.use();
+
+
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, texture);
 
         shader.setMat4("view", viewMatrix);
         shader.setMat4("projection", projectionMatrix);
