@@ -17,15 +17,28 @@
 #include "Arrow.h"
 
 
+// Collidable Attributes
+struct Collidable
+{
+	glm::vec3 normal;
+	float d;
+	std::string name;
+};
+
 void frame_buffer_size_callback(GLFWwindow* window, int width, int height);
 void processInput(GLFWwindow* window);
 void mouseMoveEvent(GLFWwindow* window, double posX, double posY);
+void mouseButtonHandler(GLFWwindow* window, int button, int action, int modes);
+void mouseScrollEvent(GLFWwindow* window, double xOffset, double yOffset);
 std::vector<float> drawUnitCircle(float radius);
 void generateSphere(std::vector<float>& vertices, std::vector<unsigned int>& indices, float radius);
 void checkImageFormat(const int& channel);
 void sendDataToCard(unsigned int& VAO, const std::vector<float>& vertices, int stride);
 void sendDataToCard(unsigned int& VAO, const std::vector<float>& vertices, const std::vector<unsigned int>& indices, int stride);
-
+static int computeDartboardScore(float distanceFromCenter, float radius);
+bool intersectSegmentPlane(glm::vec3 start, glm::vec3 end, glm::vec3 normal, float d, glm::vec3& hitPoint);
+void setCollidables(std::vector<Collidable>& collidables);
+bool sweptPointAABB(glm::vec3 start, glm::vec3 velocity, glm::vec3 minB, glm::vec3 maxB, float& tHit, glm::vec3& hitNormal);
 
 // Screen Size Settings
 int width = 1000;
@@ -43,12 +56,11 @@ float deltaTime = 0.0f;
 float lastFrame = 0.0f;
 
 // ground attributes
-float groundSize = 21.0f;
+const float groundSize = 21.0f;
 
 // wall attributes
-float wallHeight = 14.0f;
-float wallOffset = groundSize - 2.5f;
-float wallSize = 21.0f;
+const float wallOffset = groundSize - 2.5f;
+const float wallSize = groundSize;
 
 // Arrow Settings
 glm::vec3 initialArrowPos = camera.Position;
@@ -65,13 +77,21 @@ bool arrowStuck = false;
 glm::vec3 velocity = glm::vec3(0.0f);
 bool firstTime;
 float speedFactor = 0.2;
+bool arrowStuckInTarget = false;
+
 
 // Motion and Gravity
 float g = 9.8;
 
 
 // Light Attributes
-glm::vec3 lightPos = glm::vec3(-15.0f, 17.0f, 0.0f);
+glm::vec3 lightOffset = glm::vec3(0.0f, 15.0f, 0.0f);
+glm::vec3 lightPos;
+glm::vec3 lightColor = glm::vec3(1.0f);
+glm::vec3 diffuseColor = lightColor * glm::vec3(0.7f);
+glm::vec3 ambientColor = diffuseColor * glm::vec3(0.2f);
+glm::vec3 specularColor = glm::vec3(1.0f);
+
 
 // Dartboard size (world units)
 float dartboardRadius = groundSize-20;
@@ -80,21 +100,27 @@ glm::vec3 prevArrowPos = glm::vec3(0.0f);
 int lastThrowScore = 0;
 bool throwing = false;
 
-static int computeDartboardScore(float distanceFromCenter, float radius) {
-	if (distanceFromCenter > radius) return 0;
-
-	float r = radius;
-	// simple ring scoring (adjust thresholds as you like)
-	if (distanceFromCenter <= 0.1f * r) return 50; // inner bull
-	if (distanceFromCenter <= 0.25f * r) return 25; // outer bull
-	if (distanceFromCenter <= 0.5f * r) return 10; // inner ring
-	if (distanceFromCenter <= r) return 5; // outer area
-	return 0;
-}
-
 
 // Image format
 unsigned int format;
+
+// Target Attributes
+glm::vec3 targetOffset = glm::vec3(0.0f, 7.0f, -10.0f);
+glm::vec3 targetPos = glm::vec3(0.0f, 0.0f, 0.0f);
+
+// Level Settings
+bool level1 = true;
+bool level2 = false;
+bool level3 = false;
+bool level4 = false;
+
+// Target Path Attributes
+const float phi1 = glm::radians(60.0f);
+const float phi2 = glm::radians(5.0f);
+const float phi3 = glm::radians(30.0f);
+const float r1 = 5.0f;
+const float r2 = 6.0f;
+const float r3 = 7.0f;
 
 
 int main() {
@@ -124,15 +150,17 @@ int main() {
 		return -1;
 	}
 	glfwSetCursorPosCallback(window, mouseMoveEvent);
+	glfwSetMouseButtonCallback(window, mouseButtonHandler);
+	glfwSetScrollCallback(window, mouseScrollEvent);
 	glEnable(GL_DEPTH_TEST);
 
 	Shader groundShader("vertexShader.glsl", "fragmentShader.glsl");
 	groundShader.use();
+
+	// Setting the material properties that react with light
 	groundShader.setInt("material.diffuse", 0);
-	groundShader.setVec3("light.position", lightPos);
-	glm::vec3 lightColor = glm::vec3(1.0f);
-	glm::vec3 diffuseColor = lightColor * glm::vec3(0.7f);
-	glm::vec3 ambientColor = diffuseColor * glm::vec3(0.2f);
+
+	// Setting the light properties -> often called energy of light, also no specular componet needed cause our ground is not shiny
 	groundShader.setVec3("light.ambient", ambientColor);
 	groundShader.setVec3("light.diffuse", diffuseColor);
 
@@ -192,32 +220,6 @@ int main() {
 
 	stbi_image_free(data);
 
-	// Dartboard texture (PNG with alpha support)
-	GLuint textureDartboard;
-	glGenTextures(1, &textureDartboard);
-	glBindTexture(GL_TEXTURE_2D, textureDartboard);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-
-    int dbChannels = 0;
-	// flip vertically so image row 0 is bottom (matches OpenGL UV convention)
-	stbi_set_flip_vertically_on_load(true);
-	unsigned char* dbData = stbi_load("./resources/dartboard.png", &textureWidth, &textureHeight, &dbChannels, 4);
-	if (dbData) {
-		// ensure proper alignment for arbitrary image widths
-		glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, textureWidth, textureHeight, 0, GL_RGBA, GL_UNSIGNED_BYTE, dbData);
-		glGenerateMipmap(GL_TEXTURE_2D);
-        std::cout << "Loaded dartboard.png: " << textureWidth << "x" << textureHeight << " channels(" << dbChannels << ")" << std::endl;
-		stbi_image_free(dbData);
-		glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
-	}
-	else {
-		std::cout << "Failed to load ./resources/dartboard.png" << std::endl;
-	}
-
 	GLuint textureWall;
 	glGenTextures(1, &textureWall);
 	glBindTexture(GL_TEXTURE_2D, textureWall);
@@ -267,24 +269,6 @@ int main() {
 
 	glBindVertexArray(0);
 
-	// Create a dedicated quad VAO for the dartboard (uses 0..1 UVs so the image isn't stretched/repeated)
-	GLuint dartVAO = 0, dartVBO = 0, dartEBO = 0;
-    // create a unit quad in model space and scale it by `dartboardRadius` when rendering
-	// (previously this used dartboardRadius for the vertex positions and then scaled again,
-	// producing an overly large quad that could be clipped)
-	float boardHalf = 1.0f; // quad spans [-boardHalf, boardHalf]
-	std::vector<float> dartVertices = {
-		// pos.x, pos.y, pos.z,    normal.x,normal.y,normal.z,   u, v
-		-boardHalf,  boardHalf, 0.0f,   0.0f, 0.0f, 1.0f,   0.0f, 1.0f,
-		 boardHalf,  boardHalf, 0.0f,   0.0f, 0.0f, 1.0f,   1.0f, 1.0f,
-		 boardHalf, -boardHalf, 0.0f,   0.0f, 0.0f, 1.0f,   1.0f, 0.0f,
-		-boardHalf, -boardHalf, 0.0f,   0.0f, 0.0f, 1.0f,   0.0f, 0.0f
-	};
-	std::vector<unsigned int> dartIndices = { 0,1,2, 0,2,3 };
-
-	glGenVertexArrays(1, &dartVAO);
-	sendDataToCard(dartVAO, dartVertices, dartIndices, 8);
-
 	std::vector<float> indicatorVertices = drawUnitCircle(0.03f);
 
 	Shader indicatorShader("circlVertexShader.glsl", "circleFragmentShader.glsl");
@@ -299,7 +283,7 @@ int main() {
 	glGenVertexArrays(1, &sourceVAO);
 	std::vector<float> sourceVertices;
 	std::vector<unsigned int> sourceIndices;
-	generateSphere(sourceVertices, sourceIndices, 1);
+	generateSphere(sourceVertices, sourceIndices, 0.5);
 	sendDataToCard(sourceVAO, sourceVertices, sourceIndices, 8);
 
 	arrowPos = initialArrowPos;
@@ -320,6 +304,107 @@ int main() {
 
 	Arrow arrow(2.0f, 0.02f, 0.5f, 0.02f);
 
+	std::vector<Collidable> collidables;
+
+	setCollidables(collidables);
+
+	Shader targetShader("cubeVertexShader.glsl", "cubeFragmentShader.glsl");
+
+	std::vector<float> vertices = {
+		// positions          // normals           // texture coords
+		-0.5f, -0.5f, -0.5f,  0.0f,  0.0f, -1.0f,  0.0f, 0.0f,
+		 0.5f, -0.5f, -0.5f,  0.0f,  0.0f, -1.0f,  1.0f, 0.0f,
+		 0.5f,  0.5f, -0.5f,  0.0f,  0.0f, -1.0f,  1.0f, 1.0f,
+		 0.5f,  0.5f, -0.5f,  0.0f,  0.0f, -1.0f,  1.0f, 1.0f,
+		-0.5f,  0.5f, -0.5f,  0.0f,  0.0f, -1.0f,  0.0f, 1.0f,
+		-0.5f, -0.5f, -0.5f,  0.0f,  0.0f, -1.0f,  0.0f, 0.0f,
+
+		-0.5f, -0.5f,  0.5f,  0.0f,  0.0f, 1.0f,   0.0f, 0.0f,
+		 0.5f, -0.5f,  0.5f,  0.0f,  0.0f, 1.0f,   1.0f, 0.0f,
+		 0.5f,  0.5f,  0.5f,  0.0f,  0.0f, 1.0f,   1.0f, 1.0f,
+		 0.5f,  0.5f,  0.5f,  0.0f,  0.0f, 1.0f,   1.0f, 1.0f,
+		-0.5f,  0.5f,  0.5f,  0.0f,  0.0f, 1.0f,   0.0f, 1.0f,
+		-0.5f, -0.5f,  0.5f,  0.0f,  0.0f, 1.0f,   0.0f, 0.0f,
+
+		-0.5f,  0.5f,  0.5f, -1.0f,  0.0f,  0.0f,  1.0f, 0.0f,
+		-0.5f,  0.5f, -0.5f, -1.0f,  0.0f,  0.0f,  1.0f, 1.0f,
+		-0.5f, -0.5f, -0.5f, -1.0f,  0.0f,  0.0f,  0.0f, 1.0f,
+		-0.5f, -0.5f, -0.5f, -1.0f,  0.0f,  0.0f,  0.0f, 1.0f,
+		-0.5f, -0.5f,  0.5f, -1.0f,  0.0f,  0.0f,  0.0f, 0.0f,
+		-0.5f,  0.5f,  0.5f, -1.0f,  0.0f,  0.0f,  1.0f, 0.0f,
+
+		 0.5f,  0.5f,  0.5f,  1.0f,  0.0f,  0.0f,  1.0f, 0.0f,
+		 0.5f,  0.5f, -0.5f,  1.0f,  0.0f,  0.0f,  1.0f, 1.0f,
+		 0.5f, -0.5f, -0.5f,  1.0f,  0.0f,  0.0f,  0.0f, 1.0f,
+		 0.5f, -0.5f, -0.5f,  1.0f,  0.0f,  0.0f,  0.0f, 1.0f,
+		 0.5f, -0.5f,  0.5f,  1.0f,  0.0f,  0.0f,  0.0f, 0.0f,
+		 0.5f,  0.5f,  0.5f,  1.0f,  0.0f,  0.0f,  1.0f, 0.0f,
+
+		-0.5f, -0.5f, -0.5f,  0.0f, -1.0f,  0.0f,  0.0f, 1.0f,
+		 0.5f, -0.5f, -0.5f,  0.0f, -1.0f,  0.0f,  1.0f, 1.0f,
+		 0.5f, -0.5f,  0.5f,  0.0f, -1.0f,  0.0f,  1.0f, 0.0f,
+		 0.5f, -0.5f,  0.5f,  0.0f, -1.0f,  0.0f,  1.0f, 0.0f,
+		-0.5f, -0.5f,  0.5f,  0.0f, -1.0f,  0.0f,  0.0f, 0.0f,
+		-0.5f, -0.5f, -0.5f,  0.0f, -1.0f,  0.0f,  0.0f, 1.0f,
+
+		-0.5f,  0.5f, -0.5f,  0.0f,  1.0f,  0.0f,  0.0f, 1.0f,
+		 0.5f,  0.5f, -0.5f,  0.0f,  1.0f,  0.0f,  1.0f, 1.0f,
+		 0.5f,  0.5f,  0.5f,  0.0f,  1.0f,  0.0f,  1.0f, 0.0f,
+		 0.5f,  0.5f,  0.5f,  0.0f,  1.0f,  0.0f,  1.0f, 0.0f,
+		-0.5f,  0.5f,  0.5f,  0.0f,  1.0f,  0.0f,  0.0f, 0.0f,
+		-0.5f,  0.5f, -0.5f,  0.0f,  1.0f,  0.0f,  0.0f, 1.0f
+	};
+	unsigned int targetVAO;
+	glGenVertexArrays(1, &targetVAO);
+	sendDataToCard(targetVAO, vertices, 8);
+
+	targetShader.use();
+	targetShader.setFloat("material.shininess", 32.0f);
+	targetShader.setInt("material.specular", 1);
+	targetShader.setInt("material.diffuse", 0);
+
+	targetShader.setVec3("light.diffuse", diffuseColor);
+	targetShader.setVec3("light.ambient", ambientColor);
+	targetShader.setVec3("light.specular", specularColor);
+
+	unsigned int diffuseMap;
+	glGenTextures(1, &diffuseMap);
+	glBindTexture(GL_TEXTURE_2D, diffuseMap);
+
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST_MIPMAP_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+
+	stbi_set_flip_vertically_on_load(true);
+	data = stbi_load("./resources/container2.png", &textureWidth, &textureHeight, &channel, 0);
+	if (data) {
+		checkImageFormat(channel);
+		glTexImage2D(GL_TEXTURE_2D, 0, format, textureWidth, textureHeight, 0, format, GL_UNSIGNED_BYTE, data);
+		glGenerateMipmap(GL_TEXTURE_2D);
+	}
+	else {
+		std::cout << "Faild to read texture..." << std::endl;
+	}
+	stbi_image_free(data);
+
+	unsigned int specularMap;
+	glGenTextures(1, &specularMap);
+	glBindTexture(GL_TEXTURE_2D, specularMap);
+
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST_MIPMAP_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+
+	data = stbi_load("./resources/container2_specular.png", &textureWidth, &textureHeight, &channel, 0);
+	if (data) {
+		checkImageFormat(channel);
+		glTexImage2D(GL_TEXTURE_2D, 0, format, textureWidth, textureHeight, 0, format, GL_UNSIGNED_BYTE, data);
+		glGenerateMipmap(GL_TEXTURE_2D);
+	}
+	stbi_image_free(data);
+
 	while (!glfwWindowShouldClose(window)) {
 		glClearColor(0.30f, 0.70f, 0.60f, 0.0f);
 		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -330,12 +415,42 @@ int main() {
 		lastFrame = currentFrame;
 		processInput(window);
 
+		// For light Source Moving in elliptical path
+		lightPos = lightOffset + glm::vec3(7 * sin(currentFrame), 5 * cos(currentFrame), 9 * cos(currentFrame));
+
 		// remember arrow previous position before physics update (used for collision interpolation)
 		prevArrowPos = arrowPos;
 
+		// For target
+		glm::vec3 previousTargetPos = targetPos;
+
+		// Simple Pendulum Kind of Motion
+		if (!arrowStuckInTarget && level1) {
+			targetPos = targetOffset + glm::vec3(r1 * sin(currentFrame), 0.0f, 0.0f);
+		}
+
+		// Circular Motion
+		else if (!arrowStuckInTarget && level2) {
+			targetPos = targetOffset + glm::vec3(r1 * sin(currentFrame), r1 * cos(currentFrame), 0.0f);
+		}
+
+		// Infinity Shape
+		else if (!arrowStuckInTarget && level3) {
+			targetPos = targetOffset + glm::vec3(r1 * cos(2 * currentFrame + glm::radians(90.0f)), r1 * sin(currentFrame), 0.0f);
+		}
+
+		// Random Variation Motion
+		else if (!arrowStuckInTarget && level4) {
+			targetPos = targetOffset + glm::vec3(r1 * cos(1.0f * currentFrame + phi1),
+				r2 * sin(1.6180339f * currentFrame + phi2),
+				r3 * cos(1.4142135f * currentFrame + phi3));
+		}
+
+		// Definign projection and view matrices which will be constant for all object we render
 		glm::mat4 projection = glm::perspective(glm::radians(45.0f), ((float)width / height), 0.1f, 200.0f);
 		glm::mat4 view = camera.GetViewMatrix();
 
+		// Rendering Source
 		sourceShader.use();
 		glm::mat4 sourceModel = glm::mat4(1.0f);
 		sourceModel = glm::translate(sourceModel, lightPos);
@@ -345,9 +460,36 @@ int main() {
 		glBindVertexArray(sourceVAO);
 		glDrawElements(GL_TRIANGLES, sourceIndices.size(), GL_UNSIGNED_INT, 0);
 
+		// Now its turn for target
+		targetShader.use();
+
+		glActiveTexture(GL_TEXTURE0);
+		glBindTexture(GL_TEXTURE_2D, diffuseMap);
+		glActiveTexture(GL_TEXTURE1);
+		glBindTexture(GL_TEXTURE_2D, specularMap);
+
+		targetShader.setVec3("light.position", lightPos);
+		targetShader.setVec3("viewPos", camera.Position);
+
+		glm::mat4 targetModel = glm::mat4(1.0f);
+		targetModel = glm::translate(targetModel, targetPos);
+		targetShader.setMat4("model", targetModel);
+		targetShader.setMat4("view", view);
+		targetShader.setMat4("projection", projection);
+
+		glm::mat3 normalMatrix = glm::mat3(glm::transpose(glm::inverse(targetModel)));
+		targetShader.setMat3("normalMatrix", normalMatrix);
+
+		glBindVertexArray(targetVAO);
+		glDrawArrays(GL_TRIANGLES, 0, 36);
+
 
 		groundShader.use();
+		groundShader.setVec3("light.position", lightPos);
+
+
 		// Ground
+		glActiveTexture(GL_TEXTURE0);
 		glBindTexture(GL_TEXTURE_2D, groundTexture);
 		glm::mat4 model = glm::mat4(1.0f);
 		model = glm::translate(model, glm::vec3(0.0f, 0.0f, 0.0f));
@@ -356,7 +498,7 @@ int main() {
 		groundShader.setMat4("view", view);
 		groundShader.setMat4("projection", projection);
 		groundShader.setMat4("model", model);
-		glm::mat3 normalMatrix = glm::mat3(glm::transpose(glm::inverse(model)));
+		normalMatrix = glm::mat3(glm::transpose(glm::inverse(model)));
 		groundShader.setMat3("normalMatrix", normalMatrix);
 
 		glBindVertexArray(groundVAO);
@@ -367,7 +509,7 @@ int main() {
 		// Roof
 		glBindTexture(GL_TEXTURE_2D, textureRoof);
 		glm::mat4 roofModel = glm::mat4(1.0f);
-		roofModel = glm::translate(roofModel, glm::vec3(0.0f, 22.0f, 0.0f));
+		roofModel = glm::translate(roofModel, glm::vec3(0.0f, 20.0f, 0.0f));
 		roofModel = glm::rotate(roofModel, glm::radians(180.0f), glm::vec3(1.0f, 0.0f, 0.0f));
 
 		groundShader.setMat4("view", view);
@@ -400,23 +542,6 @@ int main() {
 			glBindVertexArray(groundVAO);
 			glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
 		}
-
-	// Draw dartboard as separate quad on +Z wall so it keeps correct aspect and size
-	groundShader.use();
-	glBindTexture(GL_TEXTURE_2D, textureDartboard);
-
-	glm::mat4 dartModel = glm::mat4(1.0f);
-    // place the dartboard flush with the -Z wall
-	dartModel = glm::translate(dartModel, glm::vec3(0.0f, 0.0f, -wallOffset));
-	// scale quad to match dartboardRadius
-	dartModel = glm::scale(dartModel, glm::vec3(dartboardRadius, dartboardRadius, 1.0f));
-	groundShader.setMat4("model", dartModel);
-	normalMatrix = glm::mat3(glm::transpose(glm::inverse(dartModel)));
-	groundShader.setMat3("normalMatrix", normalMatrix);
-
-	glBindVertexArray(dartVAO);
-	glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
-	glBindVertexArray(0);
 
 	indicatorShader.use();
 	indicatorShader.setFloat("someColor", speedFactor);
@@ -475,56 +600,71 @@ int main() {
 	
 	// if the arrow is released calculate its position based on physics
 	if (releaseArrow && !arrowReachGround){
-			// Update arrow
+		// Update arrow
+		arrowPos += velocity * deltaTime * timeScale;
+		velocity.y -= g * deltaTime * timeScale;
+		glm::vec3 arrowSize = glm::vec3(0.2f, 0.2f, 0.6f);
+			
+		glm::vec3 hit;
+		bool collided = false;
 
-			arrowPos += velocity * deltaTime * timeScale;
-			velocity.y -= g * deltaTime * timeScale;
+		glm::vec3 targetVelocity = (targetPos - previousTargetPos) / deltaTime;
+		glm::vec3 relativeVelocity = velocity - targetVelocity;
 
-			if (arrowPos.y < -0.85f) {
-				arrowPos.y = -0.85f;
-				velocity = glm::vec3(0.0f);
-				arrowReachGround = true;
-				releaseArrow = false;
-				arrowStuck = true;
+		glm::vec3 halfSize = glm::vec3(0.5f);
+
+		glm::vec3 minB = targetPos - halfSize;
+		glm::vec3 maxB = targetPos + halfSize;
+
+		float tHit;
+		glm::vec3 hitNormal;
+
+		bool hitTarget = sweptPointAABB(prevArrowPos,	relativeVelocity * deltaTime, minB,	maxB, tHit, hitNormal);
+
+		if (hitTarget) {
+			arrowPos = prevArrowPos + (relativeVelocity * deltaTime) * tHit;
+
+			velocity = glm::vec3(0.0f);
+			arrowStuck = true;
+			arrowStuckInTarget = true;
+			releaseArrow = false;
+
+			std::cout << "Hit Cube!" << std::endl;
+
+			if (level1) {
+				level1 = false;
+				level2 = true;
 			}
 
-         // Check -Z wall hit (dartboard placed at z = -wallOffset)
-			if (arrowPos.z < -wallOffset) {
-				// compute intersection of segment prevArrowPos->arrowPos with plane z = -wallOffset
-				glm::vec3 curr = arrowPos;
-				glm::vec3 prev = prevArrowPos;
-				float planeZ = -wallOffset;
-				float dz = curr.z - prev.z;
-				if (fabs(dz) > 1e-6f) {
-					float t = (planeZ - prev.z) / dz;
-					if (t >= 0.0f && t <= 1.0f) {
-						glm::vec3 hit = prev + t * (curr - prev);
-						float dist = sqrt(hit.x * hit.x + hit.y * hit.y);
-						lastThrowScore = computeDartboardScore(dist, dartboardRadius);
-						std::cout << "Dart hit at: (" << hit.x << ", " << hit.y << ") score: " << lastThrowScore << std::endl;
-					}
+			else if (level2) {
+				level2 = false;
+				level3 = true;
+			}
+
+			else if (level3) {
+				level3 = false;
+				level4 = true;
+			}
+
+		}
+
+		for (auto& collidable : collidables) {
+			if (intersectSegmentPlane(prevArrowPos, arrowPos, collidable.normal, collidable.d, hit)) {
+				arrowPos = hit;
+				velocity = glm::vec3(0.0f);
+				arrowStuck = true;
+				releaseArrow = false;
+				if (collidable.normal == glm::vec3(0, 1, 0)) {
+					arrowReachGround = true;
 				}
-				velocity = glm::vec3(0.0f);
-				arrowReachWall = true;
-				releaseArrow = false;
-				arrowStuck = true;
-				throwing = false;
-			}
-			else if (arrowPos.z > wallOffset || abs(arrowPos.x) >= wallOffset) {
-				// hit some other wall or side
-				velocity = glm::vec3(0.0f);
-				arrowReachWall = true;
-				releaseArrow = false;
-				arrowStuck = true;
-				throwing = false;
-			}
 
-			if (abs(arrowPos.x) >= wallOffset) {
-				velocity = glm::vec3(0.0f);
-				arrowReachWall = true;
-				releaseArrow = false;
-				arrowStuck = true;
+				std::cout << "Arrow collided with " << collidable.name << std::endl;
+
+				collided = true;
+				break;
 			}
+		}
+
 		}
 
 	// if arrow has some velocity then let's make its orientation towards the velocity
@@ -551,6 +691,9 @@ int main() {
 
 	arrow.draw(modelArrow, view, projection);
 
+	
+
+
 	// update window title with last throw score (resets on each throw)
 	{
 			std::string title = "Jamie King - Last Score: " + std::to_string(lastThrowScore);
@@ -562,12 +705,20 @@ int main() {
 	}
 
 	glDeleteProgram(groundShader.ID);
-	glDeleteVertexArrays(1, &groundVAO);
 	glDeleteProgram(indicatorShader.ID);
-	glDeleteVertexArrays(1, &indicatorVAO);
 	glDeleteProgram(sourceShader.ID);
+	glDeleteProgram(targetShader.ID);
+
+	glDeleteVertexArrays(1, &groundVAO);
+	glDeleteVertexArrays(1, &indicatorVAO);
 	glDeleteVertexArrays(1, &sourceVAO);
-	glDeleteVertexArrays(1, &dartVAO);
+	glDeleteVertexArrays(1, &targetVAO);
+
+	glDeleteTextures(1, &groundTexture);
+	glDeleteTextures(1, &textureWall);
+	glDeleteTextures(1, &textureRoof);
+	glDeleteTextures(1, &diffuseMap);
+	glDeleteTextures(1, &specularMap);
 
 	glfwTerminate();
 	return 0;
@@ -578,6 +729,7 @@ void frame_buffer_size_callback(GLFWwindow* window, int width, int height) {
 
 	return;
 }
+
 
 void processInput(GLFWwindow* window) {
 	if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
@@ -625,8 +777,10 @@ void processInput(GLFWwindow* window) {
 		if (!arrowStuck)
 			releaseArrow = true;
 
-	if (glfwGetKey(window, GLFW_KEY_P) == GLFW_PRESS)
+	if (glfwGetKey(window, GLFW_KEY_P) == GLFW_PRESS) {
 		arrowStuck = false;
+		arrowStuckInTarget = false;
+	}
 
 	static bool previousUp = false;
 	bool currentUp = glfwGetKey(window, GLFW_KEY_UP) == GLFW_PRESS;
@@ -653,6 +807,19 @@ void processInput(GLFWwindow* window) {
 
 }
 
+void mouseButtonHandler(GLFWwindow* window, int button, int action, int modes) {
+	if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_PRESS) {
+		if (!arrowStuck)
+			releaseArrow = true;
+	}
+
+	if (button == GLFW_MOUSE_BUTTON_RIGHT && action == GLFW_PRESS) {
+		arrowStuck = false;
+		arrowStuckInTarget = false;
+	}
+}
+
+
 void mouseMoveEvent(GLFWwindow* window, double posX, double posY) {
 	if (mouseLock) {
 		float xpos = static_cast<float> (posX);
@@ -672,6 +839,17 @@ void mouseMoveEvent(GLFWwindow* window, double posX, double posY) {
 		camera.ProcessMouseMovement(xoffset, yoffset);
 	}
 	return;
+}
+
+void mouseScrollEvent(GLFWwindow* window, double xOffset, double yOffset) {
+	// Scrool up
+	if (yOffset > 0) {
+		speedFactor += 0.05f;
+	}
+	// Scroll down
+	else if (yOffset < 0) {
+		speedFactor -= 0.05f;
+	}
 }
 
 std::vector<float> drawUnitCircle(float radius) {
@@ -833,4 +1011,108 @@ void sendDataToCard(unsigned int& VAO, const std::vector<float>& vertices, const
 	glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(unsigned int), indices.data(), GL_STATIC_DRAW);
 	
 	glBindVertexArray(0);
+}
+
+static int computeDartboardScore(float distanceFromCenter, float radius) {
+	if (distanceFromCenter > radius) return 0;
+
+	float r = radius;
+	// simple ring scoring (adjust thresholds as you like)
+	if (distanceFromCenter <= 0.1f * r) return 50; // inner bull
+	if (distanceFromCenter <= 0.25f * r) return 25; // outer bull
+	if (distanceFromCenter <= 0.5f * r) return 10; // inner ring
+	if (distanceFromCenter <= r) return 5; // outer area
+	return 0;
+}
+
+bool intersectSegmentPlane(glm::vec3 start, glm::vec3 end ,glm::vec3 normal, float d, glm::vec3& hitPoint) {
+	glm::vec3 dir = end - start;
+	float denom = glm::dot(normal, dir);
+
+	if (fabs(denom) < 1e-6f)
+		return false;
+
+	float t = -(glm::dot(normal, start) + d) / denom;
+
+	if (t >= 0.0f && t <= 1.0f) {
+		hitPoint = start + t * dir;
+		return true;
+	}
+
+	return false;
+}
+
+void setCollidables(std::vector<Collidable>& collidables) {
+	Collidable ground;
+	ground.normal = glm::vec3(0.0f, 1.0f, 0.0f);
+	ground.d = 0.85f;
+	ground.name = "ground";
+	collidables.push_back(ground);
+
+	Collidable roof;
+	roof.normal = glm::vec3(0.0f, 1.0f, 0.0f);
+	roof.d = -20.0f;
+	roof.name = "roof";
+	collidables.push_back(roof);
+
+	Collidable rightWall;
+	rightWall.normal = glm::vec3(1.0f, 0.0f, 0.0f);
+	rightWall.d = -wallOffset;
+	rightWall.name = "rightWall";
+	collidables.push_back(rightWall);
+
+	Collidable leftWall;
+	leftWall.normal = glm::vec3(-1.0f, 0.0f, 0.0f);
+	leftWall.d = -wallOffset;
+	leftWall.name = "leftWall";
+	collidables.push_back(leftWall);
+
+	Collidable frontWall;
+	frontWall.normal = glm::vec3(0.0f, 0.0f, -1.0f);
+	frontWall.d = -wallOffset;
+	frontWall.name = "frontWall";
+	collidables.push_back(frontWall);
+
+	Collidable backWall;
+	backWall.normal = glm::vec3(0.0f, 0.0f, 1.0f);
+	backWall.d = -wallOffset;
+	backWall.name = "backWall";
+	collidables.push_back(backWall);
+}
+
+bool sweptPointAABB(glm::vec3 start, glm::vec3 velocity, glm::vec3 minB, glm::vec3 maxB, float& tHit, glm::vec3& hitNormal) {
+	float tEnter = 0.0f;
+	float tExit = 1.0f;
+
+	glm::vec3 normal(0.0f);
+
+	for (int i = 0; i < 3; i++) {
+		if (fabs(velocity[i]) < 1e-6f) {
+			if (start[i] < minB[i] || start[i] > maxB[i])
+				return false;
+		}
+		else {
+			float t1 = (minB[i] - start[i]) / velocity[i];
+			float t2 = (maxB[i] - start[i]) / velocity[i];
+
+			float tMin = std::min(t1, t2);
+			float tMax = std::max(t1, t2);
+
+			if (tMin > tEnter) {
+				tEnter = tMin;
+				normal = glm::vec3(0.0f);
+				normal[i] = (t1 > t2) ? 1.0f : -1.0f;
+			}
+
+			tExit = std::min(tExit, tMax);
+
+			if (tEnter > tExit)
+				return false;
+		}
+	}
+
+	tHit = tEnter;
+	hitNormal = normal;
+
+	return (tEnter >= 0.0f && tEnter <= 1.0f);
 }

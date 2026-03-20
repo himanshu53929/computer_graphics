@@ -45,5 +45,9 @@
     <None Include="cylinderFragmentShader.glsl" />
     <None Include="sourceVertexShader.glsl" />
     <None Include="sourceFragmentShader.glsl" />
+    <None Include="cubeFragmentShader.glsl" />
+    <None Include="cubeVertexShader.glsl">
+      <Filter>Source Files</Filter>
+    </None>
   </ItemGroup>
 </Project>

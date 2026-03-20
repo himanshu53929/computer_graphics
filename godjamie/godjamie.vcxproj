@@ -153,6 +153,8 @@
   <ItemGroup>
     <None Include="circleFragmentShader.glsl" />
     <None Include="circlVertexShader.glsl" />
+    <None Include="cubeFragmentShader.glsl" />
+    <None Include="cubeVertexShader.glsl" />
     <None Include="cylinderFragmentShader.glsl" />
     <None Include="cylinderVertexShader.glsl" />
     <None Include="fragmentShader.glsl" />
