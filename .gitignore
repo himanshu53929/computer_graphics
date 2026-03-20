@@ -10,6 +10,7 @@ x64/
 godjamie/x64/
 godjamie/visual.zip
 OpenGL/
+godjamie/libraries
 # visual studio
 .vs/
 

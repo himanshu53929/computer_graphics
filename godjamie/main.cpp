@@ -69,7 +69,25 @@ float speedFactor = 0.2;
 // Motion and Gravity
 float g = 9.8;
 
-// Light Attributes
+
+// Dartboard size (world units)
+float dartboardRadius = groundSize-20;
+// scoring
+glm::vec3 prevArrowPos = glm::vec3(0.0f);
+int lastThrowScore = 0;
+bool throwing = false;
+
+static int computeDartboardScore(float distanceFromCenter, float radius) {
+	if (distanceFromCenter > radius) return 0;
+
+	float r = radius;
+	// simple ring scoring (adjust thresholds as you like)
+	if (distanceFromCenter <= 0.1f * r) return 50; // inner bull
+	if (distanceFromCenter <= 0.25f * r) return 25; // outer bull
+	if (distanceFromCenter <= 0.5f * r) return 10; // inner ring
+	if (distanceFromCenter <= r) return 5; // outer area
+	return 0;
+}
 glm::vec3 lightPos = glm::vec3(-15.0f, 17.0f, 0.0f);
 
 // Dartboard size (world units)
