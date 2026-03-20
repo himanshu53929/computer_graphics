@@ -70,7 +70,7 @@ float speedFactor = 0.2;
 float g = 9.8;
 
 
-// Dartboard size (world units)
+// Light Attributes
 glm::vec3 lightPos = glm::vec3(-15.0f, 17.0f, 0.0f);
 
 // Dartboard size (world units)
@@ -283,20 +283,8 @@ int main() {
 	std::vector<unsigned int> dartIndices = { 0,1,2, 0,2,3 };
 
 	glGenVertexArrays(1, &dartVAO);
-	glGenBuffers(1, &dartVBO);
-	glGenBuffers(1, &dartEBO);
-	glBindVertexArray(dartVAO);
-	glBindBuffer(GL_ARRAY_BUFFER, dartVBO);
-	glBufferData(GL_ARRAY_BUFFER, dartVertices.size() * sizeof(float), dartVertices.data(), GL_STATIC_DRAW);
-	glEnableVertexAttribArray(0);
-	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)0);
-	glEnableVertexAttribArray(1);
-	glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(3 * sizeof(float)));
-	glEnableVertexAttribArray(2);
-	glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(6 * sizeof(float)));
-	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, dartEBO);
-	glBufferData(GL_ELEMENT_ARRAY_BUFFER, dartIndices.size() * sizeof(unsigned int), dartIndices.data(), GL_STATIC_DRAW);
-	glBindVertexArray(0);
+	sendDataToCard(dartVAO, dartVertices, dartIndices, 8);
+
 	std::vector<float> indicatorVertices = drawUnitCircle(0.03f);
 
 	Shader indicatorShader("circlVertexShader.glsl", "circleFragmentShader.glsl");
@@ -317,17 +305,17 @@ int main() {
 	arrowPos = initialArrowPos;
 
 	glm::vec3 wallPositions[] = {
-		glm::vec3(wallOffset, 0.0f, 0.0f),
-		glm::vec3(-wallOffset, 0.0f, 0.0f),
-		glm::vec3(0.0f, 0.0f, wallOffset),
-		glm::vec3(0.0f, 0.0f, -wallOffset)
+		glm::vec3(wallOffset, 0.0f, 0.0f), // Right Wall
+		glm::vec3(-wallOffset, 0.0f, 0.0f), // Left Wall
+		glm::vec3(0.0f, 0.0f, wallOffset), // Back Wall
+		glm::vec3(0.0f, 0.0f, -wallOffset) // Front Wall
 	};
 
 	glm::vec3 wallRotations[] = {
-		glm::vec3(0.0f, 0.0f, 1.0f),
-		glm::vec3(0.0f, 0.0f, 1.0f),
-		glm::vec3(1.0f, 0.0f, 0.0f),
-		glm::vec3(1.0f, 0.0f, 0.0f),
+		glm::vec3(0.0f, 0.0f, 1.0f), // Right Wall
+		glm::vec3(0.0f, 0.0f, -1.0f), // Left Wall
+		glm::vec3(-1.0f, 0.0f, 0.0f), // Back Wall
+		glm::vec3(1.0f, 0.0f, 0.0f), // Front Wall
 	};
 
 	Arrow arrow(2.0f, 0.02f, 0.5f, 0.02f);
@@ -368,12 +356,13 @@ int main() {
 		groundShader.setMat4("view", view);
 		groundShader.setMat4("projection", projection);
 		groundShader.setMat4("model", model);
+		glm::mat3 normalMatrix = glm::mat3(glm::transpose(glm::inverse(model)));
+		groundShader.setMat3("normalMatrix", normalMatrix);
 
 		glBindVertexArray(groundVAO);
 		glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
 
-		glm::mat3 normalMatrix = glm::mat3(glm::transpose(glm::inverse(model)));
-		groundShader.setMat3("normalMatrix", normalMatrix);
+
 
 		// Roof
 		glBindTexture(GL_TEXTURE_2D, textureRoof);
@@ -384,6 +373,9 @@ int main() {
 		groundShader.setMat4("view", view);
 		groundShader.setMat4("projection", projection);
 		groundShader.setMat4("model", roofModel);
+		normalMatrix = glm::mat3(glm::transpose(glm::inverse(roofModel)));
+		groundShader.setMat3("normalMatrix", normalMatrix);
+
 
 		glBindVertexArray(groundVAO);
 		glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
@@ -402,6 +394,8 @@ int main() {
 			groundShader.setMat4("view",view);
 			groundShader.setMat4("projection", projection);
 			groundShader.setMat4("model", wallModel);
+			normalMatrix = glm::mat3(glm::transpose(glm::inverse(wallModel)));
+			groundShader.setMat3("normalMatrix", normalMatrix);
 
 			glBindVertexArray(groundVAO);
 			glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
@@ -417,38 +411,41 @@ int main() {
 	// scale quad to match dartboardRadius
 	dartModel = glm::scale(dartModel, glm::vec3(dartboardRadius, dartboardRadius, 1.0f));
 	groundShader.setMat4("model", dartModel);
+	normalMatrix = glm::mat3(glm::transpose(glm::inverse(dartModel)));
+	groundShader.setMat3("normalMatrix", normalMatrix);
+
 	glBindVertexArray(dartVAO);
 	glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
 	glBindVertexArray(0);
 
-		indicatorShader.use();
-		indicatorShader.setFloat("someColor", speedFactor);
-		glm::vec3 indicatorOffset =
-			camera.Front * 0.5f +
-			camera.Right * -0.2f +
-			camera.Up * -0.1f;
+	indicatorShader.use();
+	indicatorShader.setFloat("someColor", speedFactor);
+	glm::vec3 indicatorOffset =
+		camera.Front * 0.5f +
+		camera.Right * -0.2f +
+		camera.Up * -0.1f;
 
-		glm::vec3 indicatorPos = camera.Position + indicatorOffset;
-		glm::vec3 dir = glm::normalize(camera.Front);
-		glm::quat indicatorRotation = glm::rotation(glm::vec3(0.0f, 0.0f, 1.0f), dir);
+	glm::vec3 indicatorPos = camera.Position + indicatorOffset;
+	glm::vec3 dir = glm::normalize(camera.Front);
+	glm::quat indicatorRotation = glm::rotation(glm::vec3(0.0f, 0.0f, 1.0f), dir);
 
-		glm::mat4 modelIndicator = glm::mat4(1.0f);
-		modelIndicator = glm::translate(modelIndicator, indicatorPos);
-		modelIndicator *= glm::toMat4(indicatorRotation);
+	glm::mat4 modelIndicator = glm::mat4(1.0f);
+	modelIndicator = glm::translate(modelIndicator, indicatorPos);
+	modelIndicator *= glm::toMat4(indicatorRotation);
 
 
-		indicatorShader.setMat4("view",view);
-		indicatorShader.setMat4("projection", projection);
-		indicatorShader.setMat4("model", modelIndicator);
+	indicatorShader.setMat4("view",view);
+	indicatorShader.setMat4("projection", projection);
+	indicatorShader.setMat4("model", modelIndicator);
 
-		glBindVertexArray(indicatorVAO);
-		glDrawArrays(GL_TRIANGLE_FAN, 0, indicatorVertices.size() / 3);
+	glBindVertexArray(indicatorVAO);
+	glDrawArrays(GL_TRIANGLE_FAN, 0, indicatorVertices.size() / 3);
 
-		//static glm::quat lastRot = glm::identity<glm::quat>();
-		static glm::quat lastRot = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
+	//static glm::quat lastRot = glm::identity<glm::quat>();
+	static glm::quat lastRot = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
 
-		// if the arrow isn't released yet calculate its position according to the camera's postion and orientation
-		if (!releaseArrow && !arrowStuck)
+	// if the arrow isn't released yet calculate its position according to the camera's postion and orientation
+	if (!releaseArrow && !arrowStuck)
 		{
 			glm::vec3 offset =
 				camera.Front * 0.5f +
@@ -461,8 +458,8 @@ int main() {
 			lastRot = glm::rotation(glm::vec3(0.0f, 0.0f, 1.0f), dir);
 		}
 
-		// if the arrow is set to release and it is not released yet i.e velocity = 0 , assign it a velocity
-		if (releaseArrow && (velocity == glm::vec3(0.0f))) {
+	// if the arrow is set to release and it is not released yet i.e velocity = 0 , assign it a velocity
+	if (releaseArrow && (velocity == glm::vec3(0.0f))) {
 			glm::vec3 dir = glm::normalize(camera.Front);
 			float pitch = asin(dir.y);
 			projectionAngle = glm::degrees(pitch);
@@ -475,9 +472,9 @@ int main() {
 
 			velocity = camera.Front * initialSpeed * speedFactor;
 		}
-		
-		// if the arrow is released calculate its position based on physics
-		if (releaseArrow && !arrowReachGround){
+	
+	// if the arrow is released calculate its position based on physics
+	if (releaseArrow && !arrowReachGround){
 			// Update arrow
 
 			arrowPos += velocity * deltaTime * timeScale;
@@ -530,8 +527,8 @@ int main() {
 			}
 		}
 
-		// if arrow has some velocity then let's make its orientation towards the velocity
-		if (glm::length(velocity) > 0.0001f) {
+	// if arrow has some velocity then let's make its orientation towards the velocity
+	if (glm::length(velocity) > 0.0001f) {
 			// Direction of motion
 			glm::vec3 dir = glm::normalize(velocity);
 
@@ -542,26 +539,26 @@ int main() {
 			lastRot = glm::slerp(lastRot, targetRot, 1.0f);
 		}
 
-		// let's reposition arrow if it reached ground
-		if (arrowReachGround) {
+	// let's reposition arrow if it reached ground
+	if (arrowReachGround) {
 			releaseArrow = false;
 			arrowReachGround = false;
 		}
 
-		glm::mat4 modelArrow = glm::mat4(1.0f);
-		modelArrow = glm::translate(modelArrow, arrowPos);
-		modelArrow *= glm::toMat4(lastRot);		
+	glm::mat4 modelArrow = glm::mat4(1.0f);
+	modelArrow = glm::translate(modelArrow, arrowPos);
+	modelArrow *= glm::toMat4(lastRot);		
 
-		arrow.draw(modelArrow, view, projection);
+	arrow.draw(modelArrow, view, projection);
 
-		// update window title with last throw score (resets on each throw)
-		{
+	// update window title with last throw score (resets on each throw)
+	{
 			std::string title = "Jamie King - Last Score: " + std::to_string(lastThrowScore);
 			glfwSetWindowTitle(window, title.c_str());
 		}
 
-		glfwPollEvents();
-		glfwSwapBuffers(window);
+	glfwPollEvents();
+	glfwSwapBuffers(window);
 	}
 
 	glDeleteProgram(groundShader.ID);
@@ -570,6 +567,7 @@ int main() {
 	glDeleteVertexArrays(1, &indicatorVAO);
 	glDeleteProgram(sourceShader.ID);
 	glDeleteVertexArrays(1, &sourceVAO);
+	glDeleteVertexArrays(1, &dartVAO);
 
 	glfwTerminate();
 	return 0;

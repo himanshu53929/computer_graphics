@@ -20,7 +20,6 @@ in vec3 FragPos;
 in vec2 TextCord;
 in vec3 Normal;
 
-uniform sampler2D ourTexture;
 uniform Material material;
 uniform Light light;
 
