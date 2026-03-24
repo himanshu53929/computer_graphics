@@ -35,7 +35,6 @@ void generateSphere(std::vector<float>& vertices, std::vector<unsigned int>& ind
 void checkImageFormat(const int& channel);
 void sendDataToCard(unsigned int& VAO, const std::vector<float>& vertices, int stride);
 void sendDataToCard(unsigned int& VAO, const std::vector<float>& vertices, const std::vector<unsigned int>& indices, int stride);
-static int computeDartboardScore(float distanceFromCenter, float radius);
 bool intersectSegmentPlane(glm::vec3 start, glm::vec3 end, glm::vec3 normal, float d, glm::vec3& hitPoint);
 void setCollidables(std::vector<Collidable>& collidables);
 bool sweptPointAABB(glm::vec3 start, glm::vec3 velocity, glm::vec3 minB, glm::vec3 maxB, float& tHit, glm::vec3& hitNormal);
@@ -66,7 +65,7 @@ const float wallSize = groundSize;
 glm::vec3 initialArrowPos = camera.Position;
 glm::vec3 arrowPos;
 float projectionAngle;
-float initialSpeed = 100.0f;
+float speedLimit = 100.0f;
 float lastArrowX;
 bool releaseArrow = false;
 float speedScale = 1.0f;
@@ -93,9 +92,7 @@ glm::vec3 ambientColor = diffuseColor * glm::vec3(0.2f);
 glm::vec3 specularColor = glm::vec3(1.0f);
 
 
-// Dartboard size (world units)
-float dartboardRadius = groundSize-20;
-// scoring
+
 glm::vec3 prevArrowPos = glm::vec3(0.0f);
 int lastThrowScore = 0;
 bool throwing = false;
@@ -121,6 +118,10 @@ const float phi3 = glm::radians(30.0f);
 const float r1 = 5.0f;
 const float r2 = 6.0f;
 const float r3 = 7.0f;
+
+// Scores
+unsigned int score = 0;
+unsigned int noOfTries = 0;
 
 
 int main() {
@@ -152,7 +153,8 @@ int main() {
 	glfwSetCursorPosCallback(window, mouseMoveEvent);
 	glfwSetMouseButtonCallback(window, mouseButtonHandler);
 	glfwSetScrollCallback(window, mouseScrollEvent);
-	glEnable(GL_DEPTH_TEST);
+
+	glEnable(GL_DEPTH_TEST); // This means we are using depth buffer to differentiate the near and far objects
 
 	Shader groundShader("vertexShader.glsl", "fragmentShader.glsl");
 	groundShader.use();
@@ -168,9 +170,6 @@ int main() {
 	groundShader.use();
 	groundShader.setInt("ourTexture", 0);
 
-	// enable alpha blending for textured quads (dartboard PNG may have transparency)
-	glEnable(GL_BLEND);
-	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
 	std::vector<float> Ground = {
 		// Position								// Normal					// Texture
@@ -279,6 +278,8 @@ int main() {
 	glBindVertexArray(0);
 
 	Shader sourceShader("sourceVertexShader.glsl", "sourceFragmentShader.glsl");
+	sourceShader.use();
+	sourceShader.setVec3("sourceColor", lightColor);
 	unsigned int sourceVAO;
 	glGenVertexArrays(1, &sourceVAO);
 	std::vector<float> sourceVertices;
@@ -446,7 +447,7 @@ int main() {
 				r3 * cos(1.4142135f * currentFrame + phi3));
 		}
 
-		// Definign projection and view matrices which will be constant for all object we render
+		// Definign projection and view matrices which will be same for all object we render
 		glm::mat4 projection = glm::perspective(glm::radians(45.0f), ((float)width / height), 0.1f, 200.0f);
 		glm::mat4 view = camera.GetViewMatrix();
 
@@ -574,7 +575,7 @@ int main() {
 		{
 			glm::vec3 offset =
 				camera.Front * 0.5f +
-				camera.Right * 0.2f +
+				camera.Right * 0.0f +
 				camera.Up * -0.1f;
 
 			arrowPos = camera.Position + offset;
@@ -585,17 +586,18 @@ int main() {
 
 	// if the arrow is set to release and it is not released yet i.e velocity = 0 , assign it a velocity
 	if (releaseArrow && (velocity == glm::vec3(0.0f))) {
-			glm::vec3 dir = glm::normalize(camera.Front);
-			float pitch = asin(dir.y);
-			projectionAngle = glm::degrees(pitch);
+		noOfTries += 1;
+		glm::vec3 dir = glm::normalize(camera.Front);
+		float pitch = asin(dir.y);
+		projectionAngle = glm::degrees(pitch);
 
-			// starting a new throw: reset score state
-			lastThrowScore = 0;
-			throwing = true;
-			// record initial previous position for interpolation
-			prevArrowPos = arrowPos;
+		// starting a new throw: reset score state
+		lastThrowScore = 0;
+		throwing = true;
+		// record initial previous position for interpolation
+		prevArrowPos = arrowPos;
 
-			velocity = camera.Front * initialSpeed * speedFactor;
+		velocity = camera.Front * speedLimit * speedFactor;
 		}
 	
 	// if the arrow is released calculate its position based on physics
@@ -603,7 +605,6 @@ int main() {
 		// Update arrow
 		arrowPos += velocity * deltaTime * timeScale;
 		velocity.y -= g * deltaTime * timeScale;
-		glm::vec3 arrowSize = glm::vec3(0.2f, 0.2f, 0.6f);
 			
 		glm::vec3 hit;
 		bool collided = false;
@@ -634,16 +635,27 @@ int main() {
 			if (level1) {
 				level1 = false;
 				level2 = true;
+				score += 10;
 			}
 
 			else if (level2) {
 				level2 = false;
 				level3 = true;
+				score += 20;
 			}
 
 			else if (level3) {
 				level3 = false;
 				level4 = true;
+				score += 30;
+			}
+
+			else if (level4) {
+				score += 40;
+				std::cout << "Thanks for playing our game. Your score is: " << score << std::endl;
+				std::cout << "Total tries: " << noOfTries << std::endl;
+				std::cout << "Have a great time ahead." << std::endl;
+				glfwSetWindowShouldClose(window, true);
 			}
 
 		}
@@ -694,11 +706,11 @@ int main() {
 	
 
 
-	// update window title with last throw score (resets on each throw)
-	{
-			std::string title = "Jamie King - Last Score: " + std::to_string(lastThrowScore);
-			glfwSetWindowTitle(window, title.c_str());
-		}
+	
+	
+	std::string title = "Jamie King - Last Score: " + std::to_string(score);
+	glfwSetWindowTitle(window, title.c_str());
+	
 
 	glfwPollEvents();
 	glfwSwapBuffers(window);
@@ -733,6 +745,9 @@ void frame_buffer_size_callback(GLFWwindow* window, int width, int height) {
 
 void processInput(GLFWwindow* window) {
 	if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
+		std::cout << "Thanks for playing our game. Your score is: " << score << std::endl;
+		std::cout << "Total tries: " << noOfTries << std::endl;
+		std::cout << "Have a great time ahead." << std::endl;
 		glfwSetWindowShouldClose(window, true);
 	}
 
@@ -786,6 +801,10 @@ void processInput(GLFWwindow* window) {
 	bool currentUp = glfwGetKey(window, GLFW_KEY_UP) == GLFW_PRESS;
 	if (currentUp && !previousUp) {
 		speedFactor += 0.05f;
+
+		if (speedFactor > 1.0f) {
+			speedFactor = 1.0f;
+		}
 	}
 	previousUp = currentUp;
 
@@ -845,10 +864,17 @@ void mouseScrollEvent(GLFWwindow* window, double xOffset, double yOffset) {
 	// Scrool up
 	if (yOffset > 0) {
 		speedFactor += 0.05f;
+		if (speedFactor >= 1.0f) {
+			speedFactor = 1.0f;
+		}
 	}
 	// Scroll down
 	else if (yOffset < 0) {
 		speedFactor -= 0.05f;
+		if (speedFactor < 0.0f) {
+			speedFactor = 0.0f;
+		}
+
 	}
 }
 
@@ -994,6 +1020,8 @@ void sendDataToCard(unsigned int& VAO, const std::vector<float>& vertices, const
 	glBindBuffer(GL_ARRAY_BUFFER, VBO);
 	glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(float), vertices.data(), GL_STATIC_DRAW);
 
+	// Coordinate position3 normals3 texture2
+
 	// Position Attirb
 	glEnableVertexAttribArray(0);
 	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride * sizeof(float), (void*)0);
@@ -1011,18 +1039,6 @@ void sendDataToCard(unsigned int& VAO, const std::vector<float>& vertices, const
 	glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(unsigned int), indices.data(), GL_STATIC_DRAW);
 	
 	glBindVertexArray(0);
-}
-
-static int computeDartboardScore(float distanceFromCenter, float radius) {
-	if (distanceFromCenter > radius) return 0;
-
-	float r = radius;
-	// simple ring scoring (adjust thresholds as you like)
-	if (distanceFromCenter <= 0.1f * r) return 50; // inner bull
-	if (distanceFromCenter <= 0.25f * r) return 25; // outer bull
-	if (distanceFromCenter <= 0.5f * r) return 10; // inner ring
-	if (distanceFromCenter <= r) return 5; // outer area
-	return 0;
 }
 
 bool intersectSegmentPlane(glm::vec3 start, glm::vec3 end ,glm::vec3 normal, float d, glm::vec3& hitPoint) {
